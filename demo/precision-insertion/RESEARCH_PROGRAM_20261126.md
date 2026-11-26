@@ -30,6 +30,13 @@ The short-term experiments locate the boundary between these regimes.  The
 long-term method should adapt across that boundary instead of assuming in
 advance that one sensing modality is uniformly superior.
 
+Precision is not defined only by insertion clearance.  It also includes
+moving through a narrow feasible set without disturbing neighbouring objects.
+The long-term common abstraction is therefore **precision manipulation under
+geometric and contact constraints**: the robot must infer which object or
+surface is active, while the task specification declares whether that contact
+is required, allowed, or forbidden.
+
 ## 2. What MV-GoTrack means in this program
 
 The method referred to in the meeting as the Hyunwoo/Geonhee framework is
@@ -126,9 +133,10 @@ cylinder pose is a system demonstration, not a thesis result.
 
 The RSS-scale research topic is:
 
-> **A geometry-conditioned task belief that is updated by visual tracking
-> before contact and proprioceptive evidence during contact, and transfers to
-> unseen part and fixture geometries.**
+> **A geometry-conditioned physical belief updated by visual tracking and
+> proprioceptive evidence, paired with a task constraint graph that transfers
+> across unseen object/environment geometries and different contact
+> semantics.**
 
 Working paper title:
 
@@ -154,9 +162,10 @@ leakage controls, estimator metrics and go/no-go gates are frozen in
 `RSS_BENCHMARK_PROTOCOL_20261126.md`.
 
 The primary RSS generalization contract is
-`known_geometry_zero_shot`: a test part/fixture pair is absent from policy
-training, but its CAD mesh or calibrated scan is available to the geometry
-encoder and pose front end; no object-specific policy fine-tuning is allowed.
+`known_geometry_zero_shot`: test object/environment geometry and layout are
+absent from policy training, but their CAD meshes or calibrated scans are
+available to the geometry encoder and pose front end; no scene-specific
+policy fine-tuning is allowed.
 `unknown_geometry_zero_shot`, where geometry must be inferred only from live
 images, is a separate stretch setting and must not be conflated with the
 primary result.
@@ -175,10 +184,12 @@ Recommended primary apparatus:
    matching the contact structure of *Blind Precise Assembly* more closely;
 3. exchange only a small printed or machined key insert and fixture insert so
    many geometries share one mechanical datum;
-4. place the fixture in several poses within a calibrated workspace;
-5. use multi-view RGB for free-space relative pose and ordinary Franka joint
+4. add a separate interchangeable dense-row base whose neighbour geometry,
+   gap and layout can vary under the same surveyed-datum principle;
+5. place the fixture or dense scene in several poses within a calibrated workspace;
+6. use multi-view RGB for free-space relative pose and ordinary Franka joint
    history for contact evidence;
-6. begin every episode from a declared free-space or contact-start state and
+7. begin every episode from a declared free-space or contact-start state and
    report these protocols separately.
 
 This removes grasp success, in-hand slip, finger collision, and protruding
@@ -189,16 +200,17 @@ a gripper only after the fixed-mount claim is established.
 
 ### 3.5 RSS research questions
 
-- **RQ-R1:** can one geometry-conditioned filter infer relative task state and
-  contact mode for held-out part/fixture geometries from multi-view RGB and
-  robot proprioception?
+- **RQ-R1:** can one geometry-conditioned filter infer object pose, active
+  contact identity and contact mode for held-out object/environment geometries
+  and layouts from multi-view RGB and robot proprioception?
 - **RQ-R2:** does controlling from a calibrated distribution improve success
   and recovery over a point estimate or implicit feature concatenation?
 - **RQ-R3:** does evidence-dependent visual/proprioceptive updating outperform
   vision-only, proprioception-only, fixed handoff, and monolithic fusion on
   the same held-out geometry distribution?
-- **RQ-R4:** can one estimator/controller transfer across insertion and a
-  constrained-passage task without geometry-specific policy heads?
+- **RQ-R4:** can one physical observation model transfer across insertion and
+  constrained passage while a task graph changes whether target/environment
+  contact is useful or forbidden, without task-specific estimator heads?
 
 Across-trial persistent bias is an optional extension.  It enters the RSS
 claim only if repeated trials show a stable component after conditioning on
@@ -251,7 +263,7 @@ characterized.
 
 | Axis | Minimum short-term conditions | RSS extension |
 | --- | --- | --- |
-| Task | insertion, one constrained task | 3+ task families |
+| Task | insertion, one constrained task | mating plus selective narrow passage |
 | Geometry | cylinder, one keyed shape | unseen shape families |
 | Clearance | bring-up and one tighter condition | multiple held-out clearances |
 | Visibility | full, contact-stage partial occlusion | controlled corruption/occlusion sweep |
@@ -339,20 +351,25 @@ raw depth and proprioception in a learned world model already enables
 simulation-only zero-shot insertion of unseen, unknown geometries.  The
 remaining candidate gap is therefore narrower:
 
-1. a queryable geometry-conditioned **contact likelihood**, rather than an
-   implicit multimodal policy state;
-2. an explicit calibrated posterior over relative pose and contact mode;
-3. amortization across held-out geometry families, rather than a separately
-   constructed contact manifold or online physics simulation for each part;
-4. real-robot decision value using ordinary robot joint/action history,
+1. a queryable, task-independent geometry-conditioned **contact likelihood**,
+   rather than an implicit multimodal policy state;
+2. an explicit calibrated posterior over object pose, active contact identity,
+   contact mode, and task-relevant neighbour motion;
+3. amortization across held-out geometry and layout families, rather than a
+   separately constructed contact manifold or online physics simulation for
+   each scene;
+4. a machine-readable constraint graph that distinguishes required/allowed
+   target contact from forbidden neighbour contact;
+5. real-robot decision value using ordinary robot joint/action history,
    without fingertip tactile or a wrist force/torque sensor.
 
 The strongest candidate claim is therefore:
 
-> A likelihood model conditioned on paired part/fixture geometry can score
-> relative-pose hypotheses from ordinary joint/action histories, and the
-> resulting calibrated posterior improves zero-shot precision assembly on
-> held-out geometry families over point, implicit, and geometry-specific
+> One likelihood model conditioned on object/environment geometry can score
+> pose and active-contact hypotheses from ordinary joint/action histories.
+> A declarative task constraint graph then turns the calibrated posterior into
+> useful-contact versus forbidden-contact decisions across held-out mating and
+> narrow-passage scenes, outperforming point, implicit, and specialist
 > alternatives.
 
 Across-trial persistent bias remains an undergraduate-system extension.  It
@@ -425,15 +442,20 @@ This five-dimensional residual is deliberately **not** the RSS
 representation.  It is a thesis-scale instrument for establishing whether a
 contact-conditioned belief is useful at all.
 
-### 7.3 Geometry-general belief required for RSS
+### 7.3 Geometry- and constraint-general belief required for RSS
 
-Let the part and fixture geometry be represented by `G_K` and `G_S`, obtained
-from CAD, point clouds, SDF samples, or an equivalent geometric observation.
-A shared encoder produces a geometry context
+Let the manipulated-object and local-environment geometry be represented by
+`G_O` and `G_E`, obtained from CAD, point clouds, SDF samples, or an equivalent
+geometric observation.  A shared encoder produces a physical geometry context
 
 ```text
-h_G = Enc_geometry(G_K, G_S, task_description).
+h_G = Enc_geometry(G_O, G_E).
 ```
+
+A separate task constraint graph `C` names the target and goal region,
+required/allowed/forbidden contact relations, disturbance tolerances, and
+terminal predicates.  Keeping `C` separate matters: task semantics should not
+change the physical likelihood of the same contact observation.
 
 The transient state cannot be a fixed cylinder-specific `[x, y, depth,
 tilt_x, tilt_y]` vector.  It must contain a relative rigid transform together
@@ -454,7 +476,7 @@ The estimator and controller are then conditioned on `h_G`:
 
 ```text
 b_t = p(xi_t | z^vision_0:t, z^prop_0:t, u_0:t-1, h_G)
-u_t ~ pi(b_t, h_G, task_description).
+u_t ~ pi(b_t, h_G, C).
 ```
 
 To justify generalization, the training generator must vary at least:
@@ -465,12 +487,13 @@ To justify generalization, the training generator must vary at least:
 - grasp transform and target pose;
 - visual appearance/occlusion independently of physical geometry.
 
-Evaluation must reserve entire geometry families, not only new poses of a
-seen cylinder.  At minimum, report seen-shape, held-out instance, and
-held-out family results.  Cylinder-only training followed by a keyed cylinder
-test is not evidence of the intended RSS claim.
+Evaluation must reserve entire geometry and layout families, not only new
+poses of a seen cylinder or a new random Pringles spacing.  At minimum, report
+seen-shape, held-out instance, held-out family, and held-out layout results.
+Cylinder-only training followed by a keyed cylinder test, or a single
+successful extraction row, is not evidence of the intended RSS claim.
 
-## 8. Proposed task belief
+## 8. Proposed physical belief and task constraints
 
 Let `W`, `S`, `K`, and `E` denote world, socket/constraint, key/object, and end
 effector.  The undergraduate cylinder instantiation may define a
@@ -480,22 +503,29 @@ symmetry-reduced pose residual as
 xi_t = argmin_{g in G_K} || Log( inverse(T_WS) T_WK g ) ||_Q.
 ```
 
-but the RSS belief is geometry conditioned:
+but the RSS physical belief is scene-geometry conditioned:
 
 ```text
-b_t = p(T_SK,t, d_contact,t, m_t
+b_t = p(T_WO,t, a_contact,t, m_t, delta_E,t
         | z^vision_0:t, z^prop_0:t, u_0:t-1, h_G),
 ```
 
 where:
 
-- `T_SK,t` is the transient relative part/fixture pose;
-- `d_contact,t` is a geometry-conditioned contact representation;
+- `T_WO,t` is the manipulated-object pose;
+- `a_contact,t` identifies the active environment object/surface;
 - `m_t` is the contact-mode distribution;
-- `h_G` describes the current part, fixture, and task geometry;
+- `delta_E,t` represents task-relevant neighbouring-object motion;
+- `h_G` describes current object/environment geometry;
 - `z^vision` is the MV-GoTrack/multi-view observation;
 - `z^prop` is joint position, velocity, end-effector kinematics, and action
   history available to the proprioceptive policy.
+
+The controller separately evaluates this posterior under `C`.  Thus rim
+contact may be informative and useful for mating while the same evidence of
+contact with a neighbouring container incurs forbidden-contact risk in dense
+extraction.  Physics inference is shared; task semantics are not baked into
+the likelihood.
 
 The method must work when the object has no useful symmetry.  When symmetry
 is present, it must not average incompatible SE(3) modes or invent an
@@ -530,8 +560,8 @@ The preferred hierarchical role is:
 
 ```text
 instruction + scene
-    -> VLA task/target/primitive selection
-    -> task-frame goal and constraints
+    -> VLA compiles target, goal and allowed/forbidden contacts into C
+    -> task-frame goal, constraints and primitive vocabulary
     -> metric visual alignment
     -> local proprioceptive/contact skill
     -> verifier and retry/recovery choice.
@@ -595,8 +625,8 @@ An RSS submission requires more than a successful integrated demo:
 1. an amortized geometry-conditioned contact likelihood and calibrated belief;
 2. estimator-level evidence on held-out geometry **families**;
 3. generalization across clearance, pose, and visibility;
-4. a primary insertion benchmark and at least one distinct mating/contact
-   family if the paper claims beyond insertion;
+4. one mating/engagement benchmark and one selective narrow-passage benchmark
+   with opposite contact semantics;
 5. physical comparisons to direct VLA, fixed modular handoff, and
    proprioception-only contact control;
 6. sufficient trials and independent seeds for confidence intervals;
@@ -620,6 +650,9 @@ The following outcomes would falsify or narrow the proposed method:
   adaptation.
 - If performance gains occur only on the cylinder, do not claim generalizable
   precision manipulation.
+- If insertion and narrow passage need separate observation models, describe
+  them as task-specific systems rather than a general contact-constraint
+  belief.
 
 ## 14. Immediate authoritative deliverables
 

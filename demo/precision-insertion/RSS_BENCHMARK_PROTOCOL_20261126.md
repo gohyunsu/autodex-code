@@ -1,4 +1,4 @@
-# RSS benchmark protocol: cross-geometry proprioceptive inference
+# RSS benchmark protocol: cross-task contact-constraint inference
 
 Date: 2026-11-26  
 Status: prospective protocol; no result is claimed  
@@ -9,22 +9,26 @@ Implementation reuse/gap audit: `RSS_IMPLEMENTATION_GAP_20261126.md`
 
 This protocol tests whether one frozen, geometry-conditioned observation model
 can convert ordinary Franka joint/action histories into a calibrated posterior
-over relative part--fixture pose for held-out assembly geometries, and whether
-that posterior improves real precision assembly.
+over object pose and active contact identity for held-out geometries/layouts,
+and whether a task constraint graph makes that posterior useful in both
+contact-seeking mating and contact-avoiding narrow-passage manipulation.
 
-The benchmark is designed to separate four questions:
+The benchmark is designed to separate five questions:
 
 1. Does contact history identify relative pose at all?
 2. Does the observation model transfer across geometry?
 3. Is an explicit distribution better than a point or implicit state?
-4. Does the improved belief change control success on a real robot?
+4. Does the improved belief change goal success and forbidden disturbance on
+   a real robot?
+5. Is the same physical observation model reusable across opposing contact
+   semantics, or are task-specific models still required?
 
 It does not test grasp selection, tabletop pickup, semantic task planning, or
 language understanding in the primary experiment.
 
-## 2. Frozen primary task
+## 2. Frozen primary task families
 
-### 2.1 Mechanism
+### 2.1 Family A: mating/engagement
 
 - A part cartridge is rigidly attached to the Franka flange.
 - A mating fixture cartridge is recessed in a flat plate.
@@ -38,11 +42,44 @@ The physical success detector must be independent of the evaluated estimator.
 A surveyed final depth plus passive retention or a geometry-specific seating
 switch may be used.  The exact detector is frozen before final trials.
 
-### 2.2 Sensor contract
+### 2.2 Family B: selective narrow-passage manipulation
+
+- A payload cartridge is rigidly attached to the Franka flange.
+- Interchangeable neighbouring objects define a dense local scene.
+- **Extraction** moves a designated central payload out of the row without
+  moving neighbours beyond frozen tolerances.
+- **Placement** moves a payload into a designated gap without moving
+  neighbours beyond frozen tolerances.
+- Extraction and placement are separate conditions and are never pooled into
+  one success rate.
+- A run ends in `goal_reached`, `neighbour_disturbed`, `payload_lost`,
+  `escaped workspace`, or `time/action budget exhausted`.
+
+This family instantiates the Pringles-like example but does not depend on a
+can category.  Payload/neighbour geometry and row/gap layout are varied.  The
+physical outcome is measured independently from the evaluated estimator using
+surveyed start/goal regions and neighbour pose metrology.
+
+### 2.3 Task constraint graph
+
+Every episode supplies a machine-readable graph containing:
+
+- manipulated object and goal region;
+- required, allowed, and forbidden contact relations;
+- translation/rotation disturbance tolerances for each neighbour;
+- terminal success/failure predicates;
+- available primitive types.
+
+The controlled benchmark provides this graph directly.  A language/VLA
+compiler is a separate system-level experiment with graph accuracy reported
+before task success.
+
+### 2.4 Sensor contract
 
 Primary method input:
 
-- test-time part and fixture CAD or calibrated scans;
+- test-time object and local-environment CAD or calibrated scans;
+- the frozen task constraint graph;
 - an initial visual pose distribution or particle set;
 - Franka `q`, `dq`, commanded motion and command-tracking history;
 - action/probe history.
@@ -56,14 +93,17 @@ Excluded from the primary method:
 - object-specific learned parameters.
 
 If estimated joint torque is added, it is a separately named sensor ablation,
-not silently included in the primary contract.
+not silently included in the primary contract.  The primary likelihood is
+task independent: the constraint graph affects action value, not the physics
+of the measured joint response.
 
 ## 3. Apparatus and ground truth
 
 ### 3.1 Shared mechanical datum
 
-- All part cartridges share one flange-side kinematic datum.
+- All payload cartridges share one flange-side kinematic datum.
 - All fixture cartridges share one plate-side dowel/screw datum.
+- All narrow-passage scene elements use surveyed base datums.
 - Cartridge transforms are surveyed once and versioned.
 - No per-trial hand measurement is used as policy input.
 
@@ -86,23 +126,37 @@ grasp errors.
 
 Results from the two conditions are reported separately.
 
+### 3.4 Neighbour-disturbance ground truth
+
+For narrow-passage tasks, record every neighbour's pre/post pose using
+evaluation-only metrology and synchronized video.  Report both maximum and
+sum displacement/rotation, number of neighbours crossing tolerance, and task
+completion.  Binary success alone cannot distinguish a gentle extraction from
+one that rearranges the row.
+
 ## 4. Geometry universe and leakage control
 
 ### 4.1 Geometry tiers
 
-Use both tiers so the result is not only cross-section matching.
+Use both mating and narrow-passage tiers so the result is not only
+cross-section matching or only one clutter layout.
 
 - **Tier P (prismatic):** circular/elliptical, regular polygonal, asymmetric
   keyed, convex spline, star/gear-like and freeform extruded profiles.
 - **Tier S (spatial):** tapered, stepped, multi-lobe/multi-peg, or another
   genuinely three-dimensional mating family whose contact sequence cannot be
   reduced to one planar cross-section.
+- **Tier N (narrow passage):** cylindrical, prismatic, tapered and asymmetric
+  payload/neighbour families under row, staggered and nonuniform layouts.
 
-Each generator records family, parameters, scale, insertion depth, clearance,
-manufacturing process and mesh digest.
+Each generator records task family, geometry family, parameters, scale,
+clearance, layout, manufacturing process and mesh digests.  Mating additionally
+records seated depth; narrow passage records goal region and neighbour
+disturbance tolerances.
 
-The machine-readable contract is
-`config/geometry_pair_manifest.schema.json`.
+Mating pairs use `config/geometry_pair_manifest.schema.json`; both task
+families use the superseding scene contract
+`config/constraint_scene_manifest.schema.json`.
 
 ### 4.2 Splits
 
@@ -112,11 +166,13 @@ The machine-readable contract is
 - `test_instance`: frozen unseen parameters from training families.
 - `test_family`: entire geometry generator families excluded from all model
   and controller training.
+- `test_layout`: narrow-passage layout families excluded from all model and
+  controller training.
 - `test_physical`: manufactured parts selected from the frozen test manifests
   before real evaluation.
 
-The primary generalization claim uses `test_family`.  New random seeds from a
-training generator are not sufficient evidence.
+The primary generalization claim uses `test_family` and `test_layout`.  New
+random seeds from a training generator are not sufficient evidence.
 
 ### 4.3 Test-time geometry contract
 
@@ -131,15 +187,16 @@ Primary contract: `held_out_family_known_geometry`.
 
 ### 5.1 Episodes
 
-For a geometry `G`, initial relative pose `x`, and standardized probe sequence
-`U`, record
+For scene geometry `G`, initial object/contact state `x`, and standardized
+action/probe sequence `U`, record
 
 ```text
 H = history(q, dq, command, tracking_error, U).
 ```
 
-The simulator additionally records privileged relative pose, contact set,
-contact mode, material parameters and success, none of which are actor inputs.
+The simulator additionally records privileged object/environment poses,
+contact pairs, contact mode, material parameters, neighbour motion and task
+outcome, none of which are actor inputs.
 
 ### 5.2 Candidate set
 
@@ -150,6 +207,8 @@ For each observation, construct a candidate particle set containing:
 - local translation and rotation aliases;
 - contact-compatible hard cases that share early contact but diverge under
   later probes;
+- active-contact aliases that explain the same tracking error with different
+  neighbouring objects/surfaces;
 - symmetry-equivalent poses when the geometry has a nontrivial symmetry group.
 
 The symmetry contract is attached to each geometry.  Equivalent poses count
@@ -165,7 +224,9 @@ r_theta(H, x, U, G) ~= p(H | x, U, G) / p(H | U, G).
 ```
 
 Hard-negative proposals require recorded proposal probabilities and importance
-correction.  Calibration uses validation geometries only.
+correction.  Calibration uses validation geometries only.  The task graph is
+not an input to this physics likelihood; it is applied by the controller to
+the posterior.
 
 ### 5.4 Estimator metrics
 
@@ -176,18 +237,21 @@ correction.  Calibration uses validation geometries only.
 - expected calibration error;
 - posterior entropy reduction per probe;
 - contact-mode accuracy and Brier score;
+- active object/surface contact-identity accuracy;
+- neighbour-motion posterior error;
 - inference latency and memory;
-- held-out-instance and held-out-family gaps.
+- held-out-instance, held-out-family, held-out-layout and cross-task gaps.
 
 ## 6. Control benchmark
 
 ### 6.1 Frozen probe library
 
-Begin with a standardized library defined in fixture coordinates:
+Begin with standardized libraries defined in the current task frame:
 
 - guarded axial approach;
 - small positive/negative translations along two plate axes;
 - small positive/negative rotations about task-relevant axes.
+- narrow-passage lift/translate/backoff motions along local clearance axes.
 
 Amplitudes, speed, compliance and maximum count are frozen from development
 conditions before test evaluation.  A learned active probe policy is added
@@ -195,26 +259,28 @@ only after the fixed library exposes repeatable posterior multimodality.
 
 ### 6.2 Shared controller
 
-The preferred first controller uses the same analytical correction and
-insertion logic for every estimator.  Compare:
+The preferred first controller uses the same constraint-aware objective for
+every estimator while exposing family-appropriate primitives.  Compare:
 
 1. no contact update;
 2. posterior mean/MAP correction;
-3. full posterior-aware correction or receding-horizon action selection.
+3. full posterior-aware constrained receding-horizon action selection.
 
 A learned controller is allowed only as a second experiment with estimator
 weights frozen and matched controller capacity across baselines.
 
 ### 6.3 Control metrics
 
-- seated insertion success;
+- family-specific goal success;
 - success conditioned on first contact;
 - correction/probe count;
 - time and Cartesian path length;
 - jam and recovery rate;
 - peak available interaction proxy under the declared sensor contract;
 - posterior entropy at action time;
-- success stratified by geometry family, clearance and initial residual.
+- number and magnitude of neighbour disturbances;
+- success stratified by task, geometry family, layout, clearance and initial
+  residual.
 
 ## 7. Required baselines
 
@@ -227,6 +293,7 @@ weights frozen and matched controller capacity across baselines.
 5. geometry-specific contact-manifold matching;
 6. simulation-per-particle likelihood where computationally feasible;
 7. proposed amortized likelihood-ratio posterior.
+8. task-specific estimator heads with matched total capacity.
 
 ### Control
 
@@ -238,6 +305,7 @@ weights frozen and matched controller capacity across baselines.
 6. posterior mean controller;
 7. full posterior-aware controller;
 8. geometry-specific specialist upper bound.
+9. task-specific specialist policies with matched training data.
 
 A direct VLA is a system-level baseline under a separately reported
 demonstration and compute budget.  It is not an estimator baseline.
@@ -251,6 +319,10 @@ demonstration and compute budget.  It is not an estimator baseline.
 - point estimate versus calibrated posterior;
 - prismatic-only training versus mixed prismatic/spatial training;
 - validation-instance versus test-family;
+- seen versus held-out narrow-passage layouts;
+- task constraint graph versus task-ID token;
+- shared likelihood model versus task-specific estimator heads;
+- train on both families versus cross-family transfer diagnostics;
 - controlled prior versus actual perception prior;
 - fixed probes versus information-driven probes, only if implemented;
 - symmetric subset with and without correct quotient treatment.
@@ -270,7 +342,8 @@ demonstration and compute budget.  It is not an estimator baseline.
 
 ### 9.2 Minimum evidence package
 
-- at least ten held-out physical part/fixture pairs spanning multiple families;
+- held-out physical mating pairs plus narrow-passage payload/layouts spanning
+  multiple families;
 - at least three clearance levels across the set;
 - repeated trials and confidence intervals;
 - synchronized robot history, actions, posterior snapshots and outcome video;
@@ -307,20 +380,30 @@ online-compute advantage over geometry-specific alternatives.
 
 Failure action: do not claim zero-shot amortization.
 
-### Gate D: real decision value
+### Gate D: cross-semantics reuse
 
-The estimator improvement survives sim-to-real and changes insertion outcomes
-on manufactured held-out geometries.
+The same frozen physical observation model improves calibrated state/contact
+inference in mating and narrow passage.  A structured task constraint graph
+improves held-out relation/layout decisions over a task-ID token.
+
+Failure action: remove the cross-task claim.  Report two family-specific
+methods only if each is independently publishable.
+
+### Gate E: real decision value
+
+The estimator improvement survives sim-to-real and changes mating success or
+narrow-passage disturbance on manufactured held-out scenes.
 
 Failure action: target an estimator/simulation paper only if the remaining
 evidence is independently strong; otherwise continue method development.
 
 ## 11. Publication boundary
 
-The primary paper claim is supported only if all four gates pass.  The
+The primary paper claim is supported only if all five gates pass.  The
 following are valuable engineering results but insufficient on their own:
 
 - a successful cylinder demo;
+- a successful Pringles extraction demo;
 - improved visual tracking;
 - a learned sensor gate;
 - simulation-only unseen-shape success;

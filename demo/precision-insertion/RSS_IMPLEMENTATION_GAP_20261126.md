@@ -14,9 +14,11 @@ logic.  It does not claim that the RSS method is implemented.
 | Franka joint-history stream | Precision runtime and blind-assembly real adapter expose robot state/action histories. | Interface exists; synchronized likelihood dataset absent |
 | Proprioception-only policy | Cylinder contact-start PPO environment, training and evaluation exist in `blind-assembly-reproduction`. | Cylinder simulation baseline only |
 | Diverse geometry simulation | Current environment builds one circular key/socket contract and uses circular tip-edge labels. | Missing |
+| Dense narrow-passage simulation | No parameterized neighbouring-object layouts, forbidden-contact labels or disturbance metrics are present. | Missing |
+| Task constraint graph | A machine-readable scene schema now defines goals and allowed/forbidden contacts. | Schema only; compiler/controller absent |
 | Fixed flange part mount | Existing models retain a gripper/held-key body and grasp randomization. | Missing clean primary apparatus/model |
 | Recessed interchangeable fixture | Existing precision assets center on protruding socket fixtures. | Missing |
-| Geometry-conditioned likelihood-ratio model | No paired-geometry encoder, ratio estimator or particle update was found. | Missing core method |
+| Geometry-conditioned likelihood-ratio model | No scene-geometry encoder, ratio estimator or pose/contact-identity particle update was found. | Missing core method |
 | Calibrated posterior metrics | Existing scripts report task/contact policy outcomes, not pose-posterior NLL/coverage. | Missing |
 | Direct VLA baseline | Existing Qwen/Gemini modules are VLMs, not action policies. | Missing |
 | Real held-out geometry evidence | No clean-room cartridges, stage manifest or physical trials exist. | Missing |
@@ -78,19 +80,19 @@ RSS primary experiment.
 
 ### 4.1 Geometry and dataset layer
 
-1. `GeometryPairManifest`
-   - part/fixture mesh digests;
-   - common datums and seated transform;
-   - clearance and insertion depth;
-   - generator family and parameters;
-   - symmetry/equivalence contract;
-   - train/validation/test split.
-2. Geometry-family generators for prismatic and genuinely spatial mating
-   pairs.
+1. `ConstraintSceneManifest`
+   - manipulated-object and environment mesh digests/poses;
+   - task family, goal region and available primitives;
+   - required, allowed and forbidden contact relations;
+   - disturbance tolerances;
+   - geometry/layout generator families and split;
+   - symmetry/equivalence contract.
+2. Geometry-family generators for prismatic/spatial mating pairs and dense
+   narrow-passage payload/neighbour scenes.
 3. Exact or validated collision representation that preserves clearance.
 4. Fixed-flange part and recessed-fixture model builder.
-5. Privileged simulator recorder for relative pose, contacts, material
-   nuisance variables and task outcome.
+5. Privileged simulator recorder for object/environment poses, contact
+   identity, material nuisance variables, neighbour motion and task outcome.
 
 ### 4.2 Observation collection
 
@@ -99,28 +101,29 @@ RSS primary experiment.
    actions.
 3. Controlled visual-prior particle generator.
 4. Actual multi-view-prior adapter using the same particle contract.
-5. Candidate-particle and contact-alias sampler with symmetry-equivalence
-   handling.
+5. Candidate-particle and active-contact-alias sampler with symmetry
+   equivalence and variable neighbour count.
 
 ### 4.3 Inference
 
-1. paired part/fixture geometry encoder;
+1. posed object/environment scene-geometry encoder;
 2. temporal joint/action history encoder;
 3. neural likelihood-to-evidence ratio estimator;
 4. proposal-aware hard-negative sampler and importance correction;
 5. particle weight update/resampling;
-6. contact-mode auxiliary head;
+6. active contact-identity/mode auxiliary head;
 7. held-out validation calibration;
 8. posterior evaluator for rank, NLL, coverage, ECE and entropy reduction.
 
 ### 4.4 Control and evidence
 
-1. shared analytical probe/correction controller;
-2. posterior-mean and full-posterior action adapters;
-3. geometry-independent seating detector contract;
-4. research-episode schema adapters for modular, blind, implicit and proposed
+1. task-constraint graph compiler and validator;
+2. shared constrained objective with family-appropriate primitive libraries;
+3. posterior-mean and full-posterior action adapters;
+4. family-specific goal detector plus common forbidden-disturbance contract;
+5. research-episode schema adapters for modular, blind, implicit and proposed
    methods;
-5. synchronized posterior/action/outcome replay.
+6. synchronized posterior/action/contact-identity/outcome replay.
 
 ## 5. Recommended package boundary
 
@@ -130,7 +133,7 @@ Use a new project or top-level package with dependencies flowing one way:
 ```text
 precision camera/robot adapters ----+
                                     |
-blind-assembly simulator utilities -+--> geometry_belief_assembly
+blind-assembly simulator utilities -+--> constraint_belief_manipulation
                                           |-- geometry
                                           |-- simulation
                                           |-- probes
@@ -144,12 +147,12 @@ must not import the experimental RSS method.
 
 ## 6. Implementation order and evidence gates
 
-### Milestone 0: benchmark generator
+### Milestone 0: benchmark generators
 
-- two prismatic training families;
-- one held-out prismatic family;
-- one spatial diagnostic family;
-- geometry manifest and exact seated/collision validation.
+- two prismatic mating training families;
+- one held-out mating family and one spatial diagnostic family;
+- two narrow-passage geometry/layout training families and one held-out layout;
+- scene manifest and exact seated/clearance/disturbance validation.
 
 Evidence: mesh/clearance validator, deterministic reset tests and split-leak
 audit.
@@ -158,8 +161,8 @@ audit.
 
 - fixed-flange simulator;
 - standardized probes;
-- privileged pose/contact histories;
-- candidate particle sets with aliases.
+- privileged pose/contact-identity/neighbour-motion histories;
+- candidate particle sets with pose and contact aliases.
 
 Evidence: the same history/candidate record can be replayed deterministically
 and contains no privileged actor feature.
@@ -203,12 +206,13 @@ confidence intervals.
 The next technical work is **not** more cylinder tracking or VLM prompting.
 It is:
 
-1. select or implement a diverse exact-clearance geometry generator;
-2. replace the cylinder-only MuJoCo task with a fixed-flange geometry-pair
-   interface;
-3. generate a deterministic probe/history dataset;
-4. establish that relative pose is identifiable on a held-out family before
+1. select or implement diverse exact-clearance mating and narrow-passage scene
+   generators;
+2. replace the cylinder-only MuJoCo task with a geometry/layout-general
+   fixed-flange environment;
+3. implement the task constraint graph interface and disturbance labels;
+4. generate a deterministic pose/contact-identity history dataset;
+5. establish that one observation model works on both task families before
    implementing belief-conditioned control.
 
 Until Milestone 2 passes, RSS controller and VLA integration are premature.
-

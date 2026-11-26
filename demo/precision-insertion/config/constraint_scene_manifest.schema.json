@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://snuvclab.org/schemas/constraint-scene-manifest-v1.json",
+  "title": "Precision manipulation constraint scene manifest",
+  "description": "Versioned geometry, layout, contact-semantics and split contract for mating and narrow-passage precision manipulation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "scene_id",
+    "task_family",
+    "generator",
+    "split",
+    "manipulated_object",
+    "environment",
+    "task_constraints",
+    "provenance"
+  ],
+  "properties": {
+    "schema": {"const": "constraint_scene_manifest_v1"},
+    "scene_id": {"type": "string", "minLength": 1},
+    "task_family": {
+      "enum": ["mating_engagement", "narrow_passage_extraction", "narrow_passage_placement"]
+    },
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["geometry_family", "layout_family", "name", "version", "parameters"],
+      "properties": {
+        "geometry_family": {"type": "string", "minLength": 1},
+        "layout_family": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "parameters": {"type": "object"},
+        "seed": {"type": ["integer", "null"]}
+      }
+    },
+    "split": {
+      "enum": [
+        "train_instance",
+        "validation_instance",
+        "test_instance",
+        "test_family",
+        "test_layout",
+        "test_physical"
+      ]
+    },
+    "manipulated_object": {"$ref": "#/$defs/posedRigidAsset"},
+    "environment": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/posedRigidAsset"}
+    },
+    "task_constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["goal", "contact_relations", "terminal_predicates"],
+      "properties": {
+        "goal": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["frame_id", "definition"],
+          "properties": {
+            "frame_id": {"type": "string", "minLength": 1},
+            "definition": {"type": "string", "minLength": 1},
+            "target_transform": {
+              "oneOf": [{"type": "null"}, {"$ref": "#/$defs/matrix4"}]
+            },
+            "position_tolerance_m": {"type": ["number", "null"], "minimum": 0},
+            "rotation_tolerance_rad": {"type": ["number", "null"], "minimum": 0}
+          }
+        },
+        "contact_relations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["object_a", "object_b", "semantics"],
+            "properties": {
+              "object_a": {"type": "string", "minLength": 1},
+              "object_b": {"type": "string", "minLength": 1},
+              "semantics": {"enum": ["required", "allowed", "forbidden"]},
+              "surface_region_a": {"type": ["string", "null"]},
+              "surface_region_b": {"type": ["string", "null"]}
+            }
+          }
+        },
+        "disturbance_tolerances": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["object_id", "translation_m", "rotation_rad"],
+            "properties": {
+              "object_id": {"type": "string", "minLength": 1},
+              "translation_m": {"type": "number", "minimum": 0},
+              "rotation_rad": {"type": "number", "minimum": 0}
+            }
+          }
+        },
+        "available_primitives": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "terminal_predicates": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "symmetry": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "group_type": {"enum": ["identity", "finite", "continuous_axial", "custom"]},
+        "equivalence_definition": {"type": "string", "minLength": 1}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["created_at", "manifest_revision"],
+      "properties": {
+        "created_at": {"type": "string", "format": "date-time"},
+        "manifest_revision": {"type": "string", "minLength": 1},
+        "generator_code_revision": {"type": ["string", "null"]},
+        "notes": {"type": ["string", "null"]}
+      }
+    }
+  },
+  "$defs": {
+    "posedRigidAsset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["object_id", "asset_id", "visual_mesh", "collision_mesh", "initial_transform_world"],
+      "properties": {
+        "object_id": {"type": "string", "minLength": 1},
+        "asset_id": {"type": "string", "minLength": 1},
+        "visual_mesh": {"$ref": "#/$defs/fileRef"},
+        "collision_mesh": {"$ref": "#/$defs/fileRef"},
+        "initial_transform_world": {"$ref": "#/$defs/matrix4"},
+        "movable": {"type": "boolean"},
+        "mass_kg": {"type": ["number", "null"], "exclusiveMinimum": 0}
+      }
+    },
+    "fileRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "matrix4": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {"type": "number"},
+        "minItems": 4,
+        "maxItems": 4
+      },
+      "minItems": 4,
+      "maxItems": 4
+    }
+  }
+}

@@ -1,4 +1,4 @@
-# RSS direction: cross-geometry proprioceptive inference for precision assembly
+# RSS direction: geometry-conditioned contact-constraint belief for precision manipulation
 
 Date: 2026-11-26  
 Status: proposed clean-room research design  
@@ -10,19 +10,35 @@ modules are audited in `RSS_IMPLEMENTATION_GAP_20261126.md`.
 
 ## 1. Recommendation in one sentence
 
-Learn an **amortized, geometry-conditioned proprioceptive observation model**
-that scores relative-pose hypotheses from short robot joint/action histories,
-fuse it with a visual pose prior into an explicit calibrated belief, and test
-zero-shot on unseen part/fixture geometries with the part rigidly mounted to
-the flange and the mating cavity recessed in a flat plate.
+Learn one **amortized, geometry-conditioned proprioceptive observation
+model** that updates an explicit belief over object pose and active contact
+identity, then use a task constraint graph to interpret the same physical
+evidence as useful, tolerable, or forbidden contact across both mating and
+dense narrow-passage manipulation.
 
 Provisional descriptive title:
 
-> **Amortized Geometry-Conditioned Proprioceptive Inference for Zero-Shot
-> Precision Assembly**
+> **Geometry-Conditioned Contact-Constraint Beliefs for Generalizable
+> Precision Manipulation**
 
 Do not lock a branded method name before the likelihood-ratio formulation and
 closest-work boundary are experimentally validated.
+
+### 1.1 Scope boundary
+
+Do not claim "universal precise manipulation."  The defensible first RSS
+scope is transfer across two frozen task families with opposite contact
+semantics:
+
+1. **mating/engagement**, where contact with the target fixture is expected
+   and may be informative;
+2. **selective narrow passage**, where contact that displaces neighbouring
+   objects is forbidden while extracting a target or placing into a gap.
+
+The claim concerns a shared physical observation model and constraint
+interface, not a single motion policy for every task.  Holding out an entirely
+new third task family is a stretch experiment.  The primary evidence uses
+held-out geometries and layouts inside the two preregistered families.
 
 ## 2. Why this is cleaner than extending the current demo
 
@@ -41,11 +57,12 @@ would not reveal whether the contribution came from perception, contact
 inference, grasping, or task-specific engineering.
 
 The RSS apparatus should therefore remove grasping from the primary claim.
-The key is rigidly attached to a repeatable Franka flange mount.  The fixture
-is a flat plate with an interchangeable recessed cavity.  Only the key insert
-and fixture insert change between geometries.  This matches the clean
-contact-start logic of *Blind Precise Assembly* while still allowing a
-free-space visual phase before contact.
+The manipulated payload is rigidly attached to a repeatable Franka flange
+mount.  Interchangeable scenes expose two deliberately different contact
+semantics: a recessed mating fixture where target contact is expected, and a
+dense narrow-passage scene where displacement of neighbouring objects is
+forbidden.  Grasping or automatic target acquisition can be restored only as
+a secondary system experiment.
 
 ## 3. Critical assessment of candidate research directions
 
@@ -53,12 +70,12 @@ free-space visual phase before contact.
 | --- | --- | --- | --- |
 | Accumulated XY correction across trials | Useful engineering diagnostic | Cylinder/task specific; calibration learning is well known; does not address unseen geometry | Thesis auxiliary only |
 | Learned modality gate between vision and proprioception | Tests phase dependence | Fixed/learned slow-fast modality division is already crowded by Force Policy, RDP, FACTR and related fusion work | Insufficient alone |
-| Direct VLA for precise insertion | Important baseline and may generalize semantically | Data hungry, weak metric-state interpretability, hard to isolate why it works, crowded topic | Baseline, not initial core method |
+| Direct VLA for precise manipulation | Important baseline and may generalize semantically | Data hungry, weak metric-state interpretability, hard to isolate why it works, crowded topic | Baseline, not initial core method |
 | End-to-end RGB+joint-history recurrent policy | Strong baseline | Implicit state gives no calibrated uncertainty or contact interpretation; difficult to audit | Required baseline |
 | Particle belief with per-hypothesis physics simulation | Principled and interpretable | Closely overlaps BayesContact/BILBA; expensive per geometry and sensor substitution alone is weak novelty | Comparison/inspiration |
 | InsertionWM-style visual-proprioceptive world model | Already demonstrates zero-shot insertion on unseen unknown geometry in simulation | An end-to-end RGB/depth+proprioception controller is no longer a novelty claim | Required baseline/boundary |
 | Geometry-specific contact manifold matching | Gives accurate explicit SE(3) estimates for complex tight-clearance parts | Requires an offline manifold per geometry and starts partially inserted | Required boundary |
-| Geometry-conditioned amortized likelihood-ratio from joint/action history | Explicit uncertainty, queryable pose evidence, unseen-shape transfer, no extra tactile/F/T sensor | Likelihood amortization and geometry-conditioned contact likelihoods exist separately; the cross-geometry assembly transfer must be decisive | **Recommended core, high risk** |
+| Geometry-conditioned amortized likelihood-ratio plus task constraint graph | Explicit uncertainty, reusable physical evidence, and different contact semantics without separate low-level policies | Contact belief in clutter, safe extraction, belief-space assembly, and likelihood amortization all exist separately; cross-task transfer must be decisive | **Recommended core, very high risk** |
 
 ## 4. Exact research gap
 
@@ -89,33 +106,47 @@ Existing work establishes the following:
 - Amortized neural likelihood-to-evidence estimation has already been used for
   Bayesian robotic grasp inference.  Learning a surrogate likelihood is
   therefore not independently novel.
+- *A Contact-Driven Framework for Manipulating in the Blind* already uses
+  joint-torque contact particles to estimate occupancy and plan in unknown
+  clutter.  A contact particle filter or a clutter-retrieval demonstration is
+  therefore not independently novel.
+- *SafePicking*, selective rearrangement, and gentle object retraction already
+  study extracting a target from dense clutter while limiting disturbance.
+  The Pringles task is a useful benchmark, not a novelty claim by itself.
 
 The remaining defensible gap is narrower:
 
-> Can a single amortized observation model evaluate how likely an ordinary
-> robot joint/action history is under arbitrary relative-pose hypotheses and
-> previously unseen part/fixture geometry, so that contact turns a coarse
-> visual prior into a calibrated, actionable pose belief without a dedicated
-> F/T or tactile sensor?
+> Can one task-independent, amortized physical observation model turn ordinary
+> robot joint/action histories into calibrated evidence over object pose and
+> active contact identity for unseen geometry and layout, while a declarative
+> task constraint graph lets the same belief support tasks in which contact
+> with one surface is useful and contact with another object is forbidden?
 
-This is not merely sensor fusion.  The candidate technical contribution is a
-**cross-geometry proprioceptive likelihood-ratio over relative assembly
-pose**, amortized over many training geometries.  It must replace both
-per-geometry contact manifolds and per-particle online physics simulation with
-one learned, queryable observation model while retaining an explicit
-posterior.  Neither "likelihood," "Bayesian," nor "amortized" is novel alone.
+This is not merely sensor fusion, clutter avoidance, or language-conditioned
+control.  The candidate contribution is a **cross-geometry proprioceptive
+likelihood-ratio over relative scene hypotheses**, amortized over training
+geometries and shared across contact semantics.  A separate constraint graph
+declares goals, allowed contact, forbidden contact, and disturbance
+tolerances.  The physics likelihood must not depend on whether a contact is
+desirable; that semantics belongs in control and evaluation.  The method must
+replace per-geometry contact manifolds and per-particle online physics
+simulation with one queryable observation model while retaining an explicit
+posterior.  Neither "belief," "Bayesian," "amortized," nor "safe extraction"
+is novel alone.
 
 ## 5. Central hypothesis and research questions
 
 ### Central hypothesis
 
-Given a test-time geometric description of an unseen key/fixture pair, a
-learned likelihood field can reuse contact signatures learned across many
-simulated geometries to score SE(3) relative-pose hypotheses from joint/action
-histories.  Bayesian fusion with a multi-view visual prior should produce a
-better calibrated and more actionable posterior than point pose estimates,
-implicit recurrent fusion, geometry-specific contact matching, and
-end-to-end visual-proprioceptive policies.
+Given test-time geometry for an unseen manipulated object and local
+environment, a learned likelihood field can reuse contact signatures learned
+across simulated geometries to score pose/contact hypotheses from joint/action
+histories.  Bayesian fusion with a multi-object visual prior should produce a
+calibrated posterior that supports both (i) intentional target contact during
+mating and (ii) avoidance or recovery from forbidden neighbour contact during
+narrow-passage extraction/placement.  It should outperform point estimates,
+implicit recurrent fusion, geometry-specific contact matching, and separate
+task-specific low-level policies under matched data and action budgets.
 
 ### Research questions
 
@@ -124,12 +155,15 @@ end-to-end visual-proprioceptive policies.
    families?
 2. **Belief calibration:** after contact observations, does the posterior put
    the declared probability mass on the true pose and contact mode?
-3. **Actionability:** at matched observation and control budgets, does using
-   the full posterior improve correction, probing, and insertion over its
-   mean, an implicit recurrent state, and a geometry-specific manifold?
-4. **Real zero-shot transfer:** can the frozen likelihood model and controller
-   assemble manufactured held-out keys/cavities without object-specific
-   learning?
+3. **Constraint actionability:** at matched observation and control budgets,
+   does the posterior improve goal progress while reducing forbidden contact
+   and neighbour disturbance over its point summary and implicit state?
+4. **Cross-semantics reuse:** can the same observation model support both
+   contact-seeking mating and contact-avoiding narrow-passage manipulation
+   without geometry- or task-specific inference heads?
+5. **Real zero-shot transfer:** can the frozen observation model and
+   constraint-conditioned controller manipulate held-out objects, fixtures,
+   and layouts without object-specific learning?
 
 Across-trial memory is not part of the core hypothesis.  It may be added only
 after repeated-trial data show a stable calibration or mounting bias.
@@ -142,10 +176,11 @@ The primary claim is:
 known_geometry_zero_shot
 ```
 
-The test shape is held out from likelihood-model and controller training.  Its
-CAD mesh or calibrated scan is available at deployment.  Deterministic
-geometry preprocessing is allowed, but no learned parameters, reference
-contact manifold, or policy may be fitted on the test object.
+The test object/environment geometry and layout are held out from
+likelihood-model and controller training.  Their CAD meshes or calibrated
+scans are available at deployment.  Deterministic geometry preprocessing and
+task-graph construction are allowed, but no learned parameters, reference
+contact manifold, or policy may be fitted on the test scene.
 
 This contract is intentionally different from:
 
@@ -158,15 +193,15 @@ This contract is intentionally different from:
 
 ## 7. Clean physical apparatus
 
-### 7.1 Robot and part mount
+### 7.1 Robot and payload mount
 
 - Franka arm with no gripper in the primary experiment.
 - Kinematically surveyed, stiff flange adapter.
-- Interchangeable key cartridges with a common mechanical datum.
-- Key-to-flange transform recorded for evaluation; the policy receives only
+- Interchangeable payload cartridges with a common mechanical datum.
+- Payload-to-flange transform recorded for evaluation; the policy receives only
   the observation contract declared for its baseline.
 
-### 7.2 Fixture plate
+### 7.2 Scene A: mating/engagement
 
 - Flat plate with interchangeable recessed fixture cartridges.
 - Common dowel/screw datum makes fixture exchange repeatable.
@@ -177,9 +212,22 @@ This contract is intentionally different from:
   estimator.
 - Plate pose varies across a declared workspace distribution.
 
-### 7.3 Geometry families
+### 7.3 Scene B: selective narrow passage
 
-At minimum include:
+- A common base holds interchangeable rigid or instrumented neighbouring
+  objects with surveyed datums.
+- The primary manipulation is either extraction from a dense row or placement
+  into an empty gap; these are reported separately.
+- The manipulated payload begins after a repeatable flange coupling, so grasp
+  failure does not confound the precision claim.
+- Neighbour pose changes are measured independently for evaluation.  A
+  compliant or breakaway mount may protect hardware, but its motion must not
+  enter the policy unless declared as an observation.
+- Layout varies in gap width, neighbour geometry, height, and target path.
+
+### 7.4 Geometry and layout families
+
+For mating, include:
 
 - circular and elliptical profiles;
 - regular polygonal profiles;
@@ -187,132 +235,161 @@ At minimum include:
 - spline/star/gear-like profiles;
 - freeform profiles generated under printability and clearance constraints.
 
-Train/validation/test splitting occurs by **generator family and parameters**.
-Holding out only random seeds from the same narrow generator is insufficient.
+For narrow passage, include cylindrical, prismatic, tapered, and asymmetric
+payload/neighbour families, plus row, staggered, and nonuniform layouts.  The
+gap and route must be represented geometrically rather than by a fixed
+Pringles-can landmark vector.
 
-### 7.4 Observation and evaluation metrology
+Train/validation/test splitting occurs by **geometry generator family,
+parameters, and layout family**.  Holding out only random seeds from the same
+narrow generator is insufficient.
+
+### 7.5 Observation and evaluation metrology
 
 - Policy input: calibrated multi-view RGB, robot `q`, `dq`, commanded action,
   and forward-kinematic history; no wrist F/T or fingertip tactile.
-- Test-time geometry input: CAD/scan descriptor for the primary contract.
+- Test-time geometry input: CAD/scan descriptors and a machine-readable task
+  constraint graph for the primary contract.
 - Primary estimator experiment: initialize a controlled visual prior around
   stage-measured ground truth.  This cleanly measures how much contact
   evidence changes pose uncertainty without confounding the result with one
   perception front end.
 - Full-system experiment: replace that controlled prior with calibrated
   multi-view pose/tracking evidence and keep all downstream code fixed.
-- Evaluation-only ground truth: stage setting plus surveyed fixture and
-  flange datums, with independent optical metrology on a subset.  It must not
-  enter the policy.
+- Evaluation-only ground truth: stage setting, surveyed fixture/scene and
+  flange datums, and independent optical metrology of neighbour motion on a
+  subset.  It must not enter the policy.
 - Contact labels in simulation: exact geometry/contact state.
-- Real success: physically interpretable seating/insertion event, with
-  passive stability reported separately.
+- Real success: task-specific goal completion plus the declared forbidden
+  contact/disturbance contract.  Seating depth is used for mating; target
+  extraction/placement and neighbour displacement are used for narrow
+  passage.
 
-## 8. State and observation model
+## 8. Task-independent physical belief and task-conditioned constraints
 
-Let `G_K` and `G_S` be key and fixture geometry, and let
+Let `G_O` be manipulated-object geometry and `G_E = {G_j}` the local
+environment geometry.  A machine-readable task constraint graph `C` contains:
+
+- the manipulated object and target/goal region;
+- allowed or required contact relations;
+- forbidden contact relations;
+- per-object displacement/rotation tolerances;
+- terminal success and failure predicates.
+
+The geometry encoder receives the posed local scene, but the physical
+observation model does **not** receive a reward label saying whether a contact
+is good or bad:
 
 ```text
-h_G = Enc_geometry(G_K, G_S, task).
+h_G = Enc_geometry(G_O, G_E).
 ```
 
-The hidden state contains:
+The hidden state contains
 
 ```text
-x_t = (T_SK,t, m_t, eta_t),
+x_t = (T_WO,t, a_t, m_t, delta_E,t, eta_t),
 ```
 
-where `T_SK,t` is relative pose, `m_t` is a geometry-agnostic contact mode,
-and `eta_t` contains nuisance physical variables needed by the estimator, such
-as effective compliance or friction.  A shape-specific fixed vector of
-cylinder landmarks is not allowed.
+where `T_WO,t` is object pose; `a_t` identifies the active object/surface
+constraint; `m_t` is free, approaching, one-sided contact, multi-contact,
+sliding, jam, or goal engagement; `delta_E,t` represents task-relevant motion
+of neighbouring objects; and `eta_t` contains nuisance compliance/friction.
+The implementation may factor this state rather than form one enormous joint
+particle set.  A fixed vector of cylinder landmarks or a fixed number of
+neighbours is not allowed.
 
-The observations are:
+The observations are
 
 ```text
-z^v_t = multi-view pose/tracking evidence
+z^v_t = multi-object pose/tracking evidence
 z^p_t = history(q, dq, FK, commanded_action, tracking_error)
 ```
 
-and the filter maintains
+and the physical filter maintains
 
 ```text
 b_t = p(x_t | z^v_0:t, z^p_0:t, u_0:t-1, h_G).
 ```
 
-The initial vision update produces particles `{x_i, w_i}` approximating a
-global pose prior.  For a candidate state `x`, a short commanded probe `U` and
-observed proprioceptive sequence `H`, the core model estimates a
-likelihood-to-evidence ratio
+For candidate state `x`, short action/probe `U`, and measured history `H`, the
+core model estimates
 
 ```text
 r_theta(H, x, U, G)
   approximately p(H | x, U, G) / p(H | U, G),
-where G = (G_K, G_S).
+where G = (G_O, G_E).
 ```
 
-`Phi_geometry` exposes candidate-conditioned geometric quantities such as
-signed distances, closest surface normals, and potential contact regions; it
-must not encode a fixed cylinder landmark layout.  With neural ratio
-estimation, a classifier distinguishes joint samples
-`(H,x,U,G) ~ p(H,x,U,G)` from independently paired samples from
-`p(H|U,G)p(x|U,G)`.  Hard-negative proposals may be added only with their
-proposal density recorded and importance correction applied; otherwise the
-learned score is not the stated ratio.  The calibrated classifier logit
-estimates `log r_theta` without requiring a normalized generative model of the
-joint history.  The particle update is
+The absence of `C` is intentional: the same collision produces the same
+physical evidence whether the task calls it alignment, tolerable incidental
+contact, or failure.  `C` is applied afterward to compute posterior goal
+probability and forbidden-contact/disturbance risk for each action:
 
 ```text
-w_i' proportional_to w_i * r_theta(H_t, x_i, U_t, G_K, G_S).
+u_t = argmax_u E_{x ~ b_t}[
+        goal_progress(x,u,C)
+        - lambda * forbidden_risk(x,u,C)
+        + beta * information_gain(x,u)
+      ].
 ```
 
-Thus the model answers a falsifiable question: *if this relative pose were
-true for these geometries, how compatible would the measured joint response
-be with the commanded motion?*  Contact-stage evidence reshapes the belief
-when the object is occluded or visual precision is insufficient.  Symmetry is
-handled only when a particular geometry has equivalent poses; the method must
-also work on fully asymmetric shapes.
+With neural ratio estimation, a classifier distinguishes joint samples
+`(H,x,U,G) ~ p(H,x,U,G)` from independently paired samples from
+`p(H|U,G)p(x|U,G)`.  Hard-negative proposals require recorded proposal density
+and importance correction.  The particle update is
+
+```text
+w_i' proportional_to w_i * r_theta(H_t, x_i, U_t, G_O, G_E).
+```
+
+`Phi_geometry` exposes candidate-conditioned signed distances, closest
+surface normals, potential contact pairs, and clearance margins.  Contact
+identity is essential: an insertion rim and a neighbouring Pringles-like can
+cannot be collapsed into one generic `CONTACT` state.  Symmetry is handled
+only for geometries that actually have equivalent poses.
 
 ### Candidate implementation
 
-1. Encode paired key/cavity SDF or surface samples in the candidate relative
-   pose with an SE(3)-equivariant or invariant geometry encoder.
-2. Encode a fixed-length history of `q`, `dq`, commanded joint/Cartesian
-   motion, and tracking error.  Keep external wrench and tactile data out of
-   the primary sensor contract.
-3. Train a neural likelihood-to-evidence ratio estimator.  Joint
-   pose--history samples are positive and independently paired samples are
-   negatives.  Mine nearby contact-compatible aliases through an explicitly
-   importance-corrected proposal.  Supervise contact mode as an auxiliary
-   output, not as the sole objective.
-4. Represent the posterior with particles over relative SE(3) pose plus a
-   categorical contact mode.  Normalize weights over the declared proposal,
-   calibrate on validation geometries only, and report true-pose rank,
-   posterior coverage, NLL, and calibration before any control result.
-5. Use a short, standardized low-force probe library first.  This makes
-   estimator comparisons identifiable and prevents a learned probing policy
-   from hiding estimation errors.
-6. Correct using posterior-aware receding-horizon control.  Compare against
-   posterior-mean control; add information-gain-based probe selection only if
-   fixed probes leave reproducible multimodality.
+1. Compile a posed local scene and `C` from CAD/scans and task specification.
+   In the controlled benchmark, `C` is provided directly.  A VLA-generated
+   `C` is evaluated separately so semantic parsing cannot hide metric errors.
+2. Encode object/environment SDF or surface samples under each candidate
+   object pose with an SE(3)-equivariant or invariant scene encoder.
+3. Encode a fixed-length history of `q`, `dq`, commanded joint/Cartesian
+   motion, and tracking error.  Keep external wrench/tactile data out of the
+   primary contract; estimated joint torque is a named ablation if used.
+4. Train one neural likelihood-to-evidence ratio estimator across both task
+   families.  Supervise active contact identity/mode as auxiliary outputs,
+   not as replacements for calibrated pose evidence.
+5. Maintain a factored posterior over object pose, active contact identity,
+   and task-relevant neighbour motion.  Report rank, NLL, credible-set
+   coverage, contact identity, and disturbance prediction before control.
+6. Use frozen, family-appropriate primitive libraries first: approach and
+   small alignment probes for mating; lift/translate/backoff primitives for
+   narrow passage.  The inference model is shared even when feasible actions
+   differ.
+7. Compare point/MAP control with posterior-aware constrained receding-horizon
+   selection.  Add learned probing only if fixed primitives leave repeatable
+   ambiguity.
 
-The first paper version should prefer a shared analytical or fixed controller
-after inference, because it makes improvements attributable to the likelihood
-model.  If diverse geometry requires a learned controller, freeze the
-estimator and evaluate estimator and controller ablations separately.
+The first paper version should prefer a shared constraint-aware controller or
+the same action-selection objective with family-specific primitive sets.  If
+each task requires a separate encoder, contact state, and policy, the claimed
+general method has failed and the result is two engineered systems.
 
 ## 9. Training program
 
 ### Phase A: simulation identifiability
 
-- Generate many exact-clearance key/fixture pairs.
-- Randomize fixture pose, mount error, compliance, friction, and visual
-  corruption independently.
+- Generate many exact-clearance mating pairs and dense narrow-passage scenes.
+- Randomize target/environment pose, layout, mount error, compliance,
+  friction, and visual corruption independently.
 - Collect standardized probing/action histories with privileged relative pose
-  and contact labels.  Include hard-negative poses that share the same first
-  contact but diverge under later probes.
-- Test whether the estimator can recover pose/contact on held-out families
-  before training a full controller.
+  and contact-identity labels.  Include hard-negative states that share the
+  same first contact but diverge under later motion.
+- Test whether one estimator can recover pose/contact identity on held-out
+  geometry and layout families in both task families before training a full
+  controller.
 
 **Go/no-go gate:** on held-out geometry families, the true pose must be ranked
 above local hard negatives and posterior coverage must improve over a
@@ -320,17 +397,19 @@ geometry-agnostic history encoder.  If not, do not proceed to a control paper.
 
 ### Phase B: belief-conditioned control
 
-- Start with one fixed correction/probing controller across geometries; train
-  a controller only if this is demonstrably insufficient.
+- Start with one constraint-aware objective and frozen primitive libraries;
+  train an end-to-end controller only if this is demonstrably insufficient.
 - Freeze geometry encoder, filter, and controller before held-out evaluation.
-- Compare mean-belief control with distribution-aware control.
+- Compare mean-belief control with distribution-aware control and compare a
+  shared inference model against task-specific estimator heads.
 
 ### Phase C: real transfer
 
 - Manufacture a subset never used for training.
 - Use CAD/scan only through the declared geometry front end.
 - Perform no object-specific policy update.
-- Report simulation-to-real degradation separately by geometry family.
+- Report simulation-to-real degradation separately by geometry and layout
+  family and by contact semantics.
 - Evaluate both a controlled initial prior and an actual multi-view prior.
 
 ### Phase D: optional full system
@@ -342,20 +421,21 @@ geometry-agnostic history encoder.  If not, do not proceed to a control paper.
 
 ## 10. Required baselines
 
-1. nominal open-loop insertion;
-2. MV-GoTrack/visual pose feedback only;
-3. Blind-style proprioception-only history policy;
-4. fixed visual alignment followed by the blind contact policy;
-5. implicit RGB/pose + proprioception recurrent fusion, parameter matched;
-6. InsertionWM-style latent world-model controller, reproduced in simulation
-   or compared under its published contract;
-7. geometry-specific contact-manifold matching on geometries for which the
-   offline manifold can be generated;
-8. geometry-conditioned point-state estimator/controller;
-9. proposed distributional contact-belief field;
-10. direct VLA trained from the same physical task distribution and with its
+1. nominal open-loop task trajectory;
+2. MV-GoTrack/multi-object visual feedback only;
+3. geometry-only signed-clearance controller with no contact update;
+4. Blind-style proprioception-only history policy;
+5. fixed visual alignment followed by a task-specific contact policy;
+6. implicit RGB/pose + proprioception recurrent fusion, parameter matched;
+7. InsertionWM-style latent world-model controller on mating, reproduced in
+   simulation or compared under its published contract;
+8. geometry-specific contact-manifold matching where applicable;
+9. task-specific point-state estimator/controllers;
+10. shared geometry-conditioned point estimator plus constraint controller;
+11. proposed distributional contact-constraint belief;
+12. direct VLA trained from the same physical task distribution and with its
    data budget reported;
-11. geometry-specific specialist upper bound where feasible.
+13. task/geometry-specific specialist upper bounds where feasible.
 
 Comparisons to BayesContact/Force Policy are conceptual unless the required
 sensor suite can be reproduced fairly.  Do not claim an empirical win from a
@@ -371,7 +451,9 @@ real-only comparison as an architectural win.
 - remove proprioceptive history;
 - point posterior versus calibrated distribution;
 - fixed handoff versus evidence-dependent update;
-- shared controller versus geometry-specific specialists;
+- task constraint graph versus a task-ID token only;
+- shared observation model versus task-specific estimator heads;
+- shared controller objective versus task/geometry-specific specialists;
 - symmetry canonicalization on/off only for the symmetric subset.
 
 ## 12. Metrics and success criteria
@@ -379,7 +461,9 @@ real-only comparison as an architectural win.
 ### Estimation
 
 - relative-pose translation/rotation error;
-- contact-mode accuracy, Brier score and negative log likelihood;
+- active-contact identity and mode accuracy, Brier score and negative log
+  likelihood;
+- neighbour-motion/disturbance prediction error;
 - posterior coverage and calibration error;
 - information gain from visual and contact observations;
 - held-out-instance and held-out-family generalization gaps.
@@ -391,7 +475,10 @@ real-only comparison as an architectural win.
 - time and path/contact-action count;
 - peak available interaction signal;
 - jam/recovery rate;
-- zero-shot real success by held-out geometry family.
+- number of disturbed neighbours;
+- maximum and total neighbour translation/rotation;
+- forbidden-contact duration or proxy under the declared sensor contract;
+- zero-shot real success by held-out geometry and layout family.
 
 The paper must report both estimator and controller results.  Success alone
 cannot prove that the belief is meaningful; pose accuracy alone cannot prove
@@ -411,6 +498,11 @@ that it is useful.
   geometry.
 - If results hold only for cylinders or one procedural family, do not submit a
   generalizable precision-manipulation claim.
+- If mating and narrow passage require separate physical encoders or
+  incompatible contact states, the cross-task representation claim fails.
+- If the task graph can be replaced by a task-ID token without loss on
+  held-out layouts and contact relations, its structured semantics are
+  unsupported.
 - If an InsertionWM-style latent policy matches success and data efficiency
   while the proposed posterior is not better calibrated, the explicit-belief
   claim is unsupported.
@@ -424,14 +516,16 @@ that it is useful.
 
 The paper should make exactly three linked claims and avoid broader wording:
 
-1. **Representation:** a queryable likelihood-ratio model maps paired geometry,
-   candidate relative pose, commanded probe, and ordinary joint history to
-   contact evidence.
-2. **Generalization:** one frozen likelihood model transfers to held-out
-   geometry families without fitting a per-part manifold or policy.
-3. **Decision value:** the calibrated posterior improves a shared controller's
-   real-robot precision or efficiency over point, implicit, and
-   geometry-specific alternatives.
+1. **Representation:** a queryable, task-independent likelihood-ratio model
+   maps scene geometry, candidate state, commanded motion, and ordinary joint
+   history to pose and contact-identity evidence.
+2. **Generalization:** one frozen observation model transfers across held-out
+   geometry/layout families and two different contact semantics without
+   fitting per-scene manifolds or task-specific inference heads.
+3. **Decision value:** a machine-readable constraint graph turns the
+   calibrated posterior into goal-seeking versus forbidden-contact decisions
+   and improves real precision/disturbance over point, implicit, and
+   specialist baselines.
 
 The following are explicitly **not** novelty claims:
 
@@ -440,6 +534,8 @@ The following are explicitly **not** novelty claims:
 - applying a particle filter to contact;
 - using active probing;
 - zero-shot insertion on unseen geometry in simulation;
+- safe target extraction from clutter;
+- language-to-skill selection;
 - symmetry-aware pose canonicalization;
 - accumulated XY correction across episodes.
 
@@ -453,6 +549,8 @@ The following are explicitly **not** novelty claims:
 | Contact-manifold sampling (2025) | Explicit full-SE(3) contact pose estimation at 0.1--1.0 mm clearance with 96.7% insertion success | No per-geometry reference manifold; family-held-out transfer and calibrated ambiguity |
 | Simulation-based Bayesian grasp inference (2021) | Amortized differentiable likelihood-to-evidence ratio for contact-rich robotic inference | Assembly-specific joint-history evidence and transfer of one observation model across held-out paired geometries |
 | BILBA / partial-observability control | Belief-aware contact planning is established | Learned geometry-conditioned observation model and held-out-shape real evidence |
+| Contact-Driven Framework for Manipulating in the Blind (2026) | Joint-torque contact particles, occupancy estimation and planning in unknown clutter | Known-geometry amortized pose/contact-identity likelihood, calibrated posterior, and transfer across opposing contact semantics |
+| SafePicking / Gentle Object Retraction / selective rearrangement | Target extraction while limiting clutter disturbance is established | One explicit belief and constraint interface shared with mating, held-out geometry/layout transfer, and estimator-level evidence |
 | Force Policy / RDP / FACTR | Global/local multimodal hierarchy is established | State-estimation contribution rather than another sensor gate or fusion architecture |
 
 If these differences cannot be supported experimentally, the honest target is
@@ -462,10 +560,13 @@ a strong system/benchmark paper rather than an RSS method paper.
 
 The direct VLA remains a professor-requested short-term baseline.  It should
 not be inserted into the core method merely to make the system appear more
-general.  In the RSS system, a VLA may select the task, geometry pair, target,
-or recovery primitive.  Metric state estimation and contact correction remain
-the responsibility of the contact-belief module unless the direct VLA
-baseline demonstrates equal precision under a matched data budget.
+general.  In the RSS system, a VLA may compile an instruction and scene into
+`C`: target, goal region, allowed/required contacts, forbidden objects,
+tolerances, and a primitive vocabulary.  The controlled primary experiment
+supplies the same graph directly.  Metric state estimation and
+contact-constrained correction remain the responsibility of the
+belief/controller unless the direct VLA baseline demonstrates equal precision
+under a matched data budget.
 
 ## 16. Evidence bar for an RSS submission
 
@@ -475,8 +576,8 @@ Minimum credible package:
    splits;
 2. calibrated estimator results, not just control success;
 3. all required modality and representation baselines;
-4. at least three clearance levels and multiple fixture poses;
-5. at least ten physically manufactured held-out part/fixture pairs spanning
+4. at least three clearance levels and multiple fixture/scene layouts;
+5. held-out physical mating pairs and narrow-passage payload/layouts spanning
    several families;
 6. repeated real trials with confidence intervals;
 7. no object-specific policy fine-tuning in the primary result;
@@ -505,6 +606,14 @@ results.
 - Contact-manifold sampling: <https://arxiv.org/abs/2507.03925>
 - Simulation-based Bayesian inference for multi-fingered grasping:
   <https://arxiv.org/abs/2109.14275>
+- A Contact-Driven Framework for Manipulating in the Blind:
+  <https://arxiv.org/abs/2510.20177>
+- SafePicking:
+  <https://www.imperial.ac.uk/media/imperial-college/research-centres-and-groups/dyson-robotics-lab/wada_etal_safepicking_ICRA2022.pdf>
+- Gentle Object Retraction in Dense Clutter:
+  <https://arxiv.org/abs/2508.19476>
+- Selective Object Rearrangement in Clutter:
+  <https://proceedings.mlr.press/v205/tang23a.html>
 
 This document is a research design, not evidence that the proposed method has
 been implemented or validated.
