@@ -149,7 +149,9 @@ novelty.
 The clean-room apparatus, critical novelty analysis, geometry split and RSS
 evidence bar are specified in `RSS_RESEARCH_DIRECTION_20261126.md`.  That
 document is authoritative for the long-term method when it conflicts with
-the cylinder-specific instantiation below.
+the cylinder-specific instantiation below.  The prospective benchmark,
+leakage controls, estimator metrics and go/no-go gates are frozen in
+`RSS_BENCHMARK_PROTOCOL_20261126.md`.
 
 The primary RSS generalization contract is
 `known_geometry_zero_shot`: a test part/fixture pair is absent from policy

@@ -4,6 +4,10 @@ Date: 2026-11-26
 Status: proposed clean-room research design  
 Relation to undergraduate work: separate apparatus and scientific claim
 
+The prospective experiment and leakage-control contract is frozen separately
+in `RSS_BENCHMARK_PROTOCOL_20261126.md`.  Current-code reuse and missing core
+modules are audited in `RSS_IMPLEMENTATION_GAP_20261126.md`.
+
 ## 1. Recommendation in one sentence
 
 Learn an **amortized, geometry-conditioned proprioceptive observation model**
@@ -368,8 +372,7 @@ real-only comparison as an architectural win.
 - point posterior versus calibrated distribution;
 - fixed handoff versus evidence-dependent update;
 - shared controller versus geometry-specific specialists;
-- symmetry canonicalization on/off only for the symmetric subset;
-- optional across-trial memory on/off, only if persistent bias is observed.
+- symmetry canonicalization on/off only for the symmetric subset.
 
 ## 12. Metrics and success criteria
 

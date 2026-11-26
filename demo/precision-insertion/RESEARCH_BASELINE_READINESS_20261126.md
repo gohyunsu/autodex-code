@@ -130,13 +130,15 @@ These are experimental definitions, not implementation failures:
 | Purpose | Establish whether contact-conditioned proprioception adds value after tracked visual alignment. | Learn a geometry-conditioned belief and controller that transfer to unseen precision-task geometries. |
 | Geometry | Cylindrical key/socket is acceptable; one asymmetric diagnostic is desirable. | Diverse procedural or collected part/fixture families; entire families held out at evaluation. |
 | Representation | Cylinder task residual `[radial_x, radial_y, depth, tilt_x, tilt_y]`; axial symmetry handled correctly. | Relative SE(3), geometry encoding, contact field/features and contact-mode distribution; no dependence on cylinder coordinates. |
-| Method complexity | Fixed visual-to-contact handoff and one residual/contact estimator. | Phase-dependent probabilistic update, geometry-conditioned controller, and optional across-trial persistent state. |
-| Novelty target | Clear empirical boundary and a focused residual correction method. | Cross-geometry generalization and calibrated multimodal belief, with direct VLA and implicit-policy comparisons. |
+| Method complexity | Fixed visual-to-contact handoff and one residual/contact estimator. | Amortized geometry-conditioned proprioceptive likelihood-ratio, explicit posterior, and a shared controller. |
+| Novelty target | Clear empirical boundary and a focused residual correction method. | Estimator-level calibration and real zero-shot transfer of one contact observation model across held-out geometry families. |
 | Evidence | Real cylinder trials across clearance, pose, grasp error and visibility. | Multiple task families and held-out geometry/clearance/visibility splits with physical evidence. |
 
 Code written for the thesis may be reused as infrastructure, but its
-cylinder-specific state, success detector and symmetry assumptions must not
-become the RSS method definition.
+cylinder-specific state, success detector, accumulated XY update, and
+symmetry assumptions must not become the RSS method definition.  The current
+RSS proposal is specified in `RSS_RESEARCH_DIRECTION_20261126.md`; neither
+generic multimodal fusion nor across-trial memory is its primary claim.
 
 ## 7. What this audit deliberately does not do
 
