@@ -69,14 +69,17 @@ audit.
   reported `stream_pid=null`, `tracker_pid=null`. This is the expected idle
   state before a same-session accepted key pose initializes tracking; the
   audit did not start MV-GoTrack from a stale or fabricated pose.
-- A robot-free four-camera key request on 2026-11-27 reached the isolated
-  camera, SAM3 and FoundPose services and returned all four frame/pose
-  responses in 7.1 s. The acquired frames were nearly black (per-view gray
-  means 2.3--15.1 on 0--255), so every SAM mask was empty and no physical 6D
-  key pose was claimed. The project camera daemon was still using its recorded
-  2,500 us exposure. Restore workspace illumination or deliberately restart
-  the project-owned stack with a session exposure before the physical run;
-  this is current acquisition evidence, not a new perception threshold.
+- Robot-free four-camera requests on 2026-11-27 reached the isolated camera,
+  SAM3 and FoundPose services. At the commissioned 2,500 us exposure the
+  frames were nearly black (per-view gray means 2.3--15.1 on 0--255), all key
+  masks were empty, and no physical 6D key pose was claimed. A reversible
+  project-only exposure audit found one key pose at 10,000 us; at 30,000 us it
+  found key poses in 2/4 views and a socket pose in only 1/4 views. This is not
+  sufficient evidence for the intended multi-view socket/key measurement.
+  The stack was restored to 2,500 us. Restore workspace illumination before
+  the physical run; the raw audit is under
+  `development/zerodex_capture4/probes/20261127_exposure_audit`. These counts
+  are current acquisition evidence, not new perception thresholds.
 - The isolated capture4 MV-GoTrack deployment now carries the same active
   four-camera calibration as kds-Z790. Both machines compute the identity
   `precision_calib_v1:26053248,25322639,25305462,25322642:7d412a3ae834d0e7b53f9cfd4576fe1e4b63f409d95ec4e9ecede07322384f70:a43905fc73e2186548b70a7402ad84eb7bf14eed7a261a37a192605c5bf95a4d`.

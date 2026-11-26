@@ -53,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("the launch does not select inline PNG transport")
     output.mkdir(parents=True)
     capture_root = output / "capture"
+    capture_root.mkdir()
     object_name = (launch.mode.key_object if args.target == "key"
                    else launch.mode.socket_object)
     prompt = args.prompt or ("white plastic cylindrical key" if args.target == "key"
@@ -134,6 +135,12 @@ def main(argv: list[str] | None = None) -> int:
             "mask_pixels": int(capture.masks[serial]["mask"].sum()),
             "pose_ok": bool(capture.poses[serial].get("ok", False)),
             "pose_error": capture.poses[serial].get("error"),
+            "pose_world": (np.asarray(
+                capture.poses[serial]["pose_world"], dtype=float).tolist()
+                if capture.poses[serial].get("pose_world") is not None else None),
+            "pose_quality": capture.poses[serial].get("quality"),
+            "perception_method": capture.poses[serial].get(
+                "perception_method"),
             **({} if args.pose_only else
                _frame_brightness(capture.images_bgr[serial])),
         } for serial in sorted(capture.masks)},
