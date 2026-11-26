@@ -23,6 +23,7 @@ audit.
 | Full action loop | The active profile supplies all ten stage handlers: key planning, pickup, lift, held relation, transfer/insertion, retry diagnosis, held return, transfer recovery, repose planning and repose execution. |
 | Same-trial correction | Pre-insertion capture, metric endpoint/partial-shape observation, bounded wrist correction, recapture and measured-motion feedback run before the first insertion stroke. The active profile permits a 10 mm per-update step and has no cumulative XY cap. |
 | Continuous key tracking | The `mvgotrack_axis_alignment_capture4.env.sh` profile sends the accepted same-session SAM3+FoundPose 6D key pose and mesh to the isolated capture4 tracker immediately after pose/state admission. Capture4 initialization and its first pose overlap local cuRobo candidate preflight; the post-planning join completes before pickup can be selected. At the stopped pre-insertion hold it consumes a newer pose, reduces the cylinder pose under its D-infinity symmetry, and supplies XY plus optional axis correction. |
+| Tracker camera-world binding | The capture4 manager publishes a canonical identity of the four selected intrinsic/extrinsic entries with every tracker session. The main runtime derives the same identity from the active `PRECISION_CALIB_DIR` and checks the first pose before pickup. Formatting and unused camera entries are ignored; this prevents combining FoundPose and tracking poses expressed in different calibrated world frames without adding a confidence or task-outcome threshold. |
 | Distributed visual inference | `mvgotrack_axis_alignment_capture4_remote_qwen.env.sh` keeps MV-GoTrack and one four-camera persistent Qwen worker on capture4. Camera IDs share one model and same-host batch path; kds retains cuRobo, the state machine and Franka control. The deployment is isolated under `/home/capture4/precision_insertion_qwen` and does not modify shared capture services or Conda environments. |
 | Insertion execution | The corrected hold is replanned along the measured socket axis. If the corrected 20 mm endpoint/path is unavailable, the profile tries the configured 10 mm axial fallback. |
 | Failed-attempt recovery | A released insertion failure first reuses its saved pre-insertion image for next-attempt XY advice, then perceives and restores the released key to the original tabletop pose. Model, saved-input or advice-validation errors are recorded as unavailable diagnostics and cannot suppress that recovery. |
@@ -68,6 +69,12 @@ audit.
   reported `stream_pid=null`, `tracker_pid=null`. This is the expected idle
   state before a same-session accepted key pose initializes tracking; the
   audit did not start MV-GoTrack from a stale or fabricated pose.
+- The isolated capture4 MV-GoTrack deployment now carries the same active
+  four-camera calibration as kds-Z790. Both machines compute the identity
+  `precision_calib_v1:26053248,25322639,25305462,25322642:7d412a3ae834d0e7b53f9cfd4576fe1e4b63f409d95ec4e9ecede07322384f70:a43905fc73e2186548b70a7402ad84eb7bf14eed7a261a37a192605c5bf95a4d`.
+  The focused calibration/track tests passed 15/15, the complete remote-branch
+  demo suite passed 1604 tests with 4 skipped, and the active board-free
+  gripper/MV-GoTrack/Qwen profile passed static preflight.
 - The source-boundary audit run from a clean shared clone of commit
   `b76ad347ad266f3ae05c19abe0f6f16d4f29913c` reports zero stock-entrypoint
   changes and zero unexpected shared-runtime changes. This avoids treating
@@ -125,7 +132,7 @@ audit.
 
 | Item | Current evidence / next action |
 | --- | --- |
-| Current hardware execution | The local Franka daemon is not running. After CUDA is restored, start the RT daemon and select either `franka_gripper` (default) or `inspire`; the current audit intentionally issued no motion command. |
+| Current hardware execution | The RT kernel is active and a local Franka daemon process is listening on ports 5555/5556, but the 2026-11-27 audit could not route to `172.16.1.11`; no live robot state or motion was claimed. Restore the robot Ethernet route/FCI connection before using the existing daemon, and select either `franka_gripper` (default) or `inspire`. The audit intentionally issued no motion command. |
 | Local cuRobo GPU preflight | The first gripper preflight exposed and fixed both a stale `~/shared_data/AutoDex` planner-YAML fallback and the explicit-YAML 1,024-seed regression. With the restored FR3 32-seed profile and stock Franka gripper collision spheres, the real local-CUDA diagnostic passed `side_down` pickup, approach and held lift while the unrelated 6.62 GB process remained resident. It then reported `transfer_unreachable` for the hypothetical socket placement; no physical scene or robot command was involved. At the end of this audit the NVIDIA kernel modules were loaded but `/dev/nvidia*` had disappeared again, so run `sudo /sbin/ub-device-create --verbose` before the next CUDA query. |
 | Physical gripper/MV-GoTrack run | Code, assets, capture4 services and tracker deployment are present, but the new gripper pickup-to-insertion route and same-session tracker initialization have not been physically exercised. First run GPU cuRobo preflight, then initialize tracking from a fresh accepted key pose; do not substitute an arbitrary or stale tracker initializer. |
 | Reproduction bundle | The NAS is currently mounted read-only. A 2026-11-03 metadata audit found the live runtime view internally valid, but the archived checkout remains at `f0f9f1d` rather than the current branch, `nvdiffrast` is absent from the archived code inventory, two reset `source_evidence.json` files no longer match their recorded sizes, and twelve managed paths are unmanifested. The tested `--refresh-code-only` path rescans these managed trees as well as archiving all three code repositories, but applying it and then running full SHA256 verification must wait for a writable mount. |
