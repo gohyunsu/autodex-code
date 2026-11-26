@@ -192,6 +192,32 @@ than retrofitting a new hypothesis.
 | Four-condition final collection | No preregistered `O/V/P/VP` physical dataset exists. | Missing |
 | Direct VLA baseline | Current Qwen/Gemini code labels images; it is not a robot action policy. | Optional baseline missing |
 
+### 10.1 Machine-readable U1 audit
+
+The visual-commissioning claim is now checked by the read-only auditor below.
+It does not run in the robot action loop and introduces no motion stop or
+failure condition.
+
+```bash
+python3 scripts/precision_layer/audit_undergraduate_evidence.py \
+  /mnt/paradex2/hyunsu/precision_insertion/runs/zerodex_capture4 \
+  --output /tmp/undergraduate_evidence_audit.json
+```
+
+For one run to pass U1, the *same episode* must preserve the accepted
+FoundPose initializer, first native-valid MV-GoTrack pose, continuous tracker
+pose stream, episode video and an offline continuity audit covering pickup,
+lift, transfer and the stopped pre-contact hold.  The continuity-audit format
+is frozen in `config/mvgotrack_continuity_audit.schema.json`.  File presence
+alone is only an artifact bundle, not a tracking-success claim.
+
+The 2026-11-27 NAS audit found 20 launch/recording receipts.  Five receipts
+reported `release_and_clear_completed`, while only one corresponding video
+was present in the canonical `2026/MM/DD/RUN_ID` tree.  None contained the
+initializer, first pose, pose stream or continuity audit, so the U1 completion
+count is zero.  This result does not invalidate the legacy demonstration
+videos; it says they cannot support the newer continuous-tracking claim.
+
 ## 11. Completion gates
 
 1. **Instrumentation freeze:** one end effector, measured fixture/clearance,

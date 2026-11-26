@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://snuvclab.org/schemas/precision-insertion-mvgotrack-continuity-audit-v1.json",
+  "title": "MV-GoTrack physical episode continuity audit",
+  "description": "Offline research evidence only. This document never changes live robot motion or runtime failure policy.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "run_id",
+    "interval",
+    "verdict",
+    "first_seq",
+    "last_seq",
+    "sample_count",
+    "phase_sample_counts",
+    "interval_unix_ns",
+    "evidence_refs"
+  ],
+  "properties": {
+    "schema": {
+      "const": "precision_insertion_mvgotrack_continuity_audit_v1"
+    },
+    "run_id": {"type": "string", "minLength": 1},
+    "interval": {"const": "pickup_start_to_precontact_hold"},
+    "verdict": {"enum": ["pass", "fail"]},
+    "first_seq": {"type": "integer", "minimum": 0},
+    "last_seq": {"type": "integer", "minimum": 1},
+    "sample_count": {"type": "integer", "minimum": 4},
+    "phase_sample_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pickup", "lift", "transfer", "precontact_hold"],
+      "properties": {
+        "pickup": {"type": "integer", "minimum": 1},
+        "lift": {"type": "integer", "minimum": 1},
+        "transfer": {"type": "integer", "minimum": 1},
+        "precontact_hold": {"type": "integer", "minimum": 1}
+      }
+    },
+    "interval_unix_ns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pickup_start", "precontact_hold"],
+      "properties": {
+        "pickup_start": {"type": "integer", "minimum": 0},
+        "precontact_hold": {"type": "integer", "minimum": 1}
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "notes": {"type": ["string", "null"]}
+  }
+}
