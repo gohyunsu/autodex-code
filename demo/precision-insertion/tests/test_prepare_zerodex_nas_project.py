@@ -260,3 +260,24 @@ def test_refresh_code_reuses_unchanged_asset_and_rig_hashes(
 
     report = verify_project(nas_root=root, verify_sha256=False, repo=main)
     assert report["reproduction_ready"] is True
+
+
+def test_refresh_code_uses_stable_repository_ids_from_any_worktree_name(
+        tmp_path, monkeypatch):
+    prepare = _load_prepare_module()
+    sources = tmp_path / "sources"
+    main = _git_repo(sources / "arbitrary-worktree-name", "main")
+    paradex = _git_repo(sources / "camera-source-copy", "camera")
+    nvdiffrast = _git_repo(sources / "renderer-source-copy", "renderer")
+    monkeypatch.setattr(prepare, "REPO", main)
+    root = _bundle(tmp_path)
+
+    prepare.refresh_code(
+        nas_root=root, paradex_repo=paradex,
+        nvdiffrast_repo=nvdiffrast)
+
+    manifest = json.loads((root / "PROJECT_MANIFEST.json").read_text())
+    assert [row["repository"] for row in manifest["code"]] == [
+        "autodex-code", "paradex", "nvdiffrast"]
+    assert [row["archive"].split("_")[0] for row in manifest["code"]] == [
+        "autodex-code", "paradex", "nvdiffrast"]

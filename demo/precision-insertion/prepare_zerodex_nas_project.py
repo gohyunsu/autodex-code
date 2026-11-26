@@ -63,13 +63,19 @@ def _copy_file(source: Path, destination: Path) -> None:
                        check=True)
 
 
-def _source_archive(repo: Path, destination: Path) -> dict:
+def _source_archive(
+    repo: Path,
+    destination: Path,
+    *,
+    repository_name: str | None = None,
+) -> dict:
     commit = _git(repo, "rev-parse", "HEAD")
-    archive = destination / f"{repo.name}_{commit[:12]}.tar.gz"
+    name = repo.name if repository_name is None else repository_name
+    archive = destination / f"{name}_{commit[:12]}.tar.gz"
     if not archive.is_file():
         subprocess.run(["git", "-C", str(repo), "archive", "--format=tar.gz",
                         "-o", str(archive), "HEAD"], check=True)
-    return {"repository": repo.name, "commit": commit,
+    return {"repository": name, "commit": commit,
             "archive": archive.name, "sha256": _sha256(archive)}
 
 
@@ -104,9 +110,13 @@ def refresh_code(*, nas_root: Path, paradex_repo: Path,
     old_archives = {row["archive"] for row in manifest["code"]}
     code = nas_root / "code"
     snapshots = [
-        _source_archive(REPO, code),
-        _source_archive(paradex_repo.expanduser().resolve(), code),
-        _source_archive(nvdiffrast_repo.expanduser().resolve(), code),
+        _source_archive(REPO, code, repository_name="autodex-code"),
+        _source_archive(
+            paradex_repo.expanduser().resolve(), code,
+            repository_name="paradex"),
+        _source_archive(
+            nvdiffrast_repo.expanduser().resolve(), code,
+            repository_name="nvdiffrast"),
     ]
     manifest["code"] = snapshots
     # This operation refreshes source archives, not runtime assets. Reuse the
@@ -229,9 +239,13 @@ def build(*, source_shared: Path, nas_root: Path, paradex_repo: Path,
     _copy_file(shared / "AutoDex/weights/sam3/sam3.pt",
                assets / "AutoDex/weights/sam3/sam3.pt")
     snapshots = [
-        _source_archive(REPO, code),
-        _source_archive(paradex_repo.expanduser().resolve(), code),
-        _source_archive(nvdiffrast_repo.expanduser().resolve(), code),
+        _source_archive(REPO, code, repository_name="autodex-code"),
+        _source_archive(
+            paradex_repo.expanduser().resolve(), code,
+            repository_name="paradex"),
+        _source_archive(
+            nvdiffrast_repo.expanduser().resolve(), code,
+            repository_name="nvdiffrast"),
     ]
     (envs / "precision-vlm.pip-freeze.txt").write_text(
         subprocess.check_output(
