@@ -5,6 +5,11 @@ Status: active research specification
 Supersedes as the top-level agenda: the same-trial visual-correction-only
 scope in `RESEARCH_EVALUATION_PROTOCOL.md`
 
+The authoritative RSS scope is now
+`RSS_ZERO_SHOT_PRECISION_LAYER_20261127.md`.  Insertion and constrained
+passage below are diagnostic examples, not a restriction of the method to two
+task families.
+
 ## 1. Scope and central question
 
 The project is not three independent attempts to solve one cylinder-insertion
@@ -154,12 +159,12 @@ Precise Assembly*.  Symmetry handling is an implementation requirement for
 shapes that have symmetry, not the source of generalization or the headline
 novelty.
 
-The clean-room apparatus, critical novelty analysis, geometry split and RSS
-evidence bar are specified in `RSS_RESEARCH_DIRECTION_20261126.md`.  That
-document is authoritative for the long-term method when it conflicts with
-the cylinder-specific instantiation below.  The prospective benchmark,
-leakage controls, estimator metrics and go/no-go gates are frozen in
-`RSS_BENCHMARK_PROTOCOL_20261126.md`.
+The current clean-room hypothesis, generalization hierarchy and RSS evidence
+bar are specified in `RSS_ZERO_SHOT_PRECISION_LAYER_20261127.md`.  The earlier
+`RSS_RESEARCH_DIRECTION_20261126.md` and
+`RSS_BENCHMARK_PROTOCOL_20261126.md` remain useful detailed precursors, but
+their mating/narrow-passage split is an evaluation basis rather than the
+method definition.
 
 The primary RSS generalization contract is
 `known_geometry_zero_shot`: test object/environment geometry and layout are

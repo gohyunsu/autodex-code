@@ -1,9 +1,13 @@
 # RSS benchmark protocol: cross-task contact-constraint inference
 
 Date: 2026-11-26  
-Status: prospective protocol; no result is claimed  
+Status: prospective two-motif pilot protocol; no result is claimed
 Method specification: `RSS_RESEARCH_DIRECTION_20261126.md`
 Implementation reuse/gap audit: `RSS_IMPLEMENTATION_GAP_20261126.md`
+
+The method-level generalization contract is superseded by
+`RSS_ZERO_SHOT_PRECISION_LAYER_20261127.md`.  Mating and narrow passage here
+are two benchmark motifs, not the full scope of precision manipulation.
 
 ## 1. Purpose
 

@@ -4,6 +4,10 @@ Date: 2026-11-26
 Status: proposed clean-room research design  
 Relation to undergraduate work: separate apparatus and scientific claim
 
+Scope correction: `RSS_ZERO_SHOT_PRECISION_LAYER_20261127.md` is authoritative
+for the long-term method.  The mating and narrow-passage scenes in this file
+are examples for a finite evaluation basis, not hard-coded task families.
+
 The prospective experiment and leakage-control contract is frozen separately
 in `RSS_BENCHMARK_PROTOCOL_20261126.md`.  Current-code reuse and missing core
 modules are audited in `RSS_IMPLEMENTATION_GAP_20261126.md`.
@@ -26,9 +30,10 @@ closest-work boundary are experimentally validated.
 
 ### 1.1 Scope boundary
 
-Do not claim "universal precise manipulation."  The defensible first RSS
-scope is transfer across two frozen task families with opposite contact
-semantics:
+Do not claim "universal precise manipulation."  The defensible RSS scope is a
+zero-shot precision execution layer for rigid-body tasks expressible as a
+compositional geometric/contact constraint program.  The following are two
+useful examples with opposite contact semantics:
 
 1. **mating/engagement**, where contact with the target fixture is expected
    and may be informative;
@@ -36,9 +41,9 @@ semantics:
    objects is forbidden while extracting a target or placing into a gap.
 
 The claim concerns a shared physical observation model and constraint
-interface, not a single motion policy for every task.  Holding out an entirely
-new third task family is a stretch experiment.  The primary evidence uses
-held-out geometries and layouts inside the two preregistered families.
+interface, not a single motion policy for every task.  Primary evidence must
+hold out geometry, layout, upstream policy and constraint-graph composition;
+holding out an undefined new constraint primitive is a stretch experiment.
 
 ## 2. Why this is cleaner than extending the current demo
 

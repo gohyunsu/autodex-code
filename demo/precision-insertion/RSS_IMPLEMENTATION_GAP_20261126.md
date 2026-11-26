@@ -6,6 +6,11 @@ Scope: current `autodex-code` and `/home/hyunsu/blind-assembly-reproduction`
 This audit distinguishes reusable infrastructure from cylinder/demo-specific
 logic.  It does not claim that the RSS method is implemented.
 
+The authoritative method scope is
+`RSS_ZERO_SHOT_PRECISION_LAYER_20261127.md`.  Items below are an implementation
+starting point; the final simulator must generate compositional constraint
+programs rather than hard-code the two example motifs.
+
 ## 1. Current authoritative boundary
 
 | Requirement | Current evidence | Status |

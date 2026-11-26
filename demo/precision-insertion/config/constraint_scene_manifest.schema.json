@@ -2,13 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://snuvclab.org/schemas/constraint-scene-manifest-v1.json",
   "title": "Precision manipulation constraint scene manifest",
-  "description": "Versioned geometry, layout, contact-semantics and split contract for mating and narrow-passage precision manipulation.",
+  "description": "Versioned geometry, layout, constraint-program and split contract for zero-shot precision manipulation.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema",
     "scene_id",
-    "task_family",
+    "task_archetype",
     "generator",
     "split",
     "manipulated_object",
@@ -19,8 +19,24 @@
   "properties": {
     "schema": {"const": "constraint_scene_manifest_v1"},
     "scene_id": {"type": "string", "minLength": 1},
-    "task_family": {
-      "enum": ["mating_engagement", "narrow_passage_extraction", "narrow_passage_placement"]
+    "task_archetype": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable evaluation archetype; it is metadata, not a closed task-ID vocabulary."
+    },
+    "constraint_motifs": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "goal_equality",
+          "clearance_inequality",
+          "required_contact",
+          "forbidden_contact",
+          "disturbance_budget",
+          "path_manifold"
+        ]
+      },
+      "uniqueItems": true
     },
     "generator": {
       "type": "object",
