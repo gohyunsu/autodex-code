@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://snuvclab.org/schemas/precision-research-episode-v1.json",
+  "title": "Precision manipulation research episode",
+  "description": "Method-neutral evaluation record. This schema logs evidence and does not define robot motion or runtime stop conditions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "run_id",
+    "episode_id",
+    "method",
+    "task",
+    "condition",
+    "episode",
+    "outcome",
+    "evidence"
+  ],
+  "properties": {
+    "schema": {
+      "const": "precision_research_episode_v1"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "episode_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "method": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "name", "version"],
+      "properties": {
+        "family": {
+          "enum": [
+            "open_loop",
+            "mvgotrack_modular",
+            "proprioception_contact",
+            "fixed_handoff",
+            "direct_vla",
+            "task_belief",
+            "geometry_conditioned_inference"
+          ]
+        },
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "checkpoint": {"type": ["string", "null"]},
+        "training_data": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "demonstrations": {"type": ["integer", "null"], "minimum": 0},
+            "environment_steps": {"type": ["integer", "null"], "minimum": 0},
+            "simulation_transitions": {"type": ["integer", "null"], "minimum": 0},
+            "manifest": {"type": ["string", "null"]}
+          }
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "variant", "object_id", "target_id", "success_definition"],
+      "properties": {
+        "family": {"enum": ["insertion", "constrained_placement", "constrained_extraction"]},
+        "variant": {"type": "string", "minLength": 1},
+        "object_id": {"type": "string", "minLength": 1},
+        "target_id": {"type": "string", "minLength": 1},
+        "clearance_mm": {"type": ["number", "null"], "minimum": 0},
+        "geometry_descriptor_id": {"type": ["string", "null"]},
+        "geometry_generalization_contract": {
+          "type": ["string", "null"],
+          "enum": [
+            "seen_geometry",
+            "held_out_instance_known_geometry",
+            "held_out_family_known_geometry",
+            "held_out_instance_unknown_geometry",
+            "held_out_family_unknown_geometry",
+            null
+          ]
+        },
+        "symmetry_group": {"type": ["string", "null"], "minLength": 1},
+        "success_definition": {"type": "string", "minLength": 1}
+      }
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["split", "target_pose_id", "visibility", "attachment"],
+      "properties": {
+        "split": {"enum": ["development", "validation", "held_out", "final"]},
+        "target_pose_id": {"type": "string", "minLength": 1},
+        "geometry_split": {"type": ["string", "null"]},
+        "visibility": {"enum": ["full", "partial", "contact_occluded", "unknown"]},
+        "attachment": {"enum": ["fixed", "repeatable_grasp", "randomized_grasp", "tabletop_pick"]},
+        "grasp_transform_id": {"type": ["string", "null"]},
+        "randomization_seed": {"type": ["integer", "null"]}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code_revision": {"type": ["string", "null"]},
+        "config_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "calibration_id": {"type": ["string", "null"]},
+        "model_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "robot": {"type": ["string", "null"]},
+        "end_effector": {"type": ["string", "null"]}
+      }
+    },
+    "episode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["started_at", "phases"],
+      "properties": {
+        "started_at": {"type": "string", "format": "date-time"},
+        "ended_at": {"type": ["string", "null"], "format": "date-time"},
+        "phases": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/phase"}
+        }
+      }
+    },
+    "observations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "initial_task_state": {"$ref": "#/$defs/taskStateOrNull"},
+        "precontact_task_state": {"$ref": "#/$defs/taskStateOrNull"},
+        "final_task_state": {"$ref": "#/$defs/taskStateOrNull"},
+        "contact_mode_probabilities": {
+          "type": ["object", "null"],
+          "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "persistent_bias_estimate": {"$ref": "#/$defs/taskStateOrNull"}
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_success", "primary_category"],
+      "properties": {
+        "task_success": {"type": "boolean"},
+        "primary_category": {
+          "enum": [
+            "initial_localization_failure",
+            "tracking_loss_or_drift",
+            "free_space_planning_or_control_failure",
+            "precontact_alignment_failure",
+            "premature_or_forbidden_contact",
+            "contact_search_or_jam_failure",
+            "partial_insertion_or_placement",
+            "task_success"
+          ]
+        },
+        "success_followed_by_instability": {"type": ["boolean", "null"]},
+        "label_source": {"enum": ["physical_sensor", "human", "vlm", "simulation", "combined"]},
+        "human_label": {"type": ["boolean", "null"]},
+        "vlm_label": {"type": ["boolean", "null"]},
+        "notes": {"type": ["string", "null"]}
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "precontact_reached": {"type": ["boolean", "null"]},
+        "time_to_success_s": {"type": ["number", "null"], "minimum": 0},
+        "path_length_m": {"type": ["number", "null"], "minimum": 0},
+        "retry_count": {"type": ["integer", "null"], "minimum": 0},
+        "contact_search_action_count": {"type": ["integer", "null"], "minimum": 0},
+        "peak_interaction_signal": {"type": ["number", "null"]},
+        "terminal_residual_norm": {"type": ["number", "null"], "minimum": 0},
+        "true_pose_rank": {"type": ["integer", "null"], "minimum": 1},
+        "pose_negative_log_likelihood": {"type": ["number", "null"]},
+        "posterior_coverage": {"type": ["boolean", "null"]},
+        "posterior_entropy": {"type": ["number", "null"], "minimum": 0},
+        "contact_mode_brier_score": {"type": ["number", "null"], "minimum": 0}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["episode_log"],
+      "properties": {
+        "episode_log": {"type": "string", "minLength": 1},
+        "videos": {"type": "array", "items": {"type": "string"}},
+        "images": {"type": "array", "items": {"type": "string"}},
+        "sensor_logs": {"type": "array", "items": {"type": "string"}},
+        "inference_logs": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  },
+  "$defs": {
+    "phase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "status", "started_at", "ended_at"],
+      "properties": {
+        "name": {
+          "enum": [
+            "initial_localization",
+            "grasp_or_attachment",
+            "lift",
+            "transfer",
+            "precontact_alignment",
+            "contact_control",
+            "verification",
+            "recovery"
+          ]
+        },
+        "status": {"enum": ["not_run", "running", "completed", "failed", "not_applicable"]},
+        "started_at": {"type": ["string", "null"], "format": "date-time"},
+        "ended_at": {"type": ["string", "null"], "format": "date-time"},
+        "detail": {"type": ["string", "null"]}
+      }
+    },
+    "taskStateOrNull": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/taskState"}
+      ]
+    },
+    "taskState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame", "coordinates", "source"],
+      "properties": {
+        "frame": {"type": "string", "minLength": 1},
+        "coordinates": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "radial_x_m": {"type": ["number", "null"]},
+            "radial_y_m": {"type": ["number", "null"]},
+            "axial_depth_m": {"type": ["number", "null"]},
+            "tilt_x_rad": {"type": ["number", "null"]},
+            "tilt_y_rad": {"type": ["number", "null"]},
+            "axial_yaw_rad": {"type": ["number", "null"]}
+          }
+        },
+        "covariance": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "array",
+            "items": {"type": "number"}
+          }
+        },
+        "source": {"enum": ["vision", "proprioception", "combined", "simulation_privilege", "unknown"]},
+        "symmetry_reduced": {"type": "boolean"}
+      }
+    }
+  }
+}
