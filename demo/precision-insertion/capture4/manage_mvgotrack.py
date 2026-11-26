@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,28 @@ PYTHON = Path(os.environ.get(
 SOURCE = ROOT / "MV-GoTrack"
 STATE = ROOT / "state"
 CAMERAS = ("26053248", "25322639", "25305462", "25322642")
+
+
+def _camera_subset_sha256(path: Path) -> str:
+    values = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(values, dict):
+        raise ValueError(f"camera calibration is not a mapping: {path}")
+    missing = [camera for camera in CAMERAS if camera not in values]
+    if missing:
+        raise ValueError(f"camera calibration lacks {missing}: {path}")
+    payload = json.dumps(
+        {camera: values[camera] for camera in CAMERAS},
+        sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def calibration_identity(cam_param: Path | None = None) -> str:
+    """Identify the exact camera world used by tracker input and output."""
+    root = ROOT / "cam_param" if cam_param is None else Path(cam_param)
+    intrinsic = _camera_subset_sha256(root / "intrinsics.json")
+    extrinsic = _camera_subset_sha256(root / "extrinsics.json")
+    cameras = ",".join(CAMERAS)
+    return f"precision_calib_v1:{cameras}:{intrinsic}:{extrinsic}"
 
 
 def _pid(name: str) -> int | None:
@@ -77,6 +100,7 @@ def _tracker_command(args) -> list[str]:
         "--init-pose", str(args.init_pose),
         "--cameras", *CAMERAS,
         "--cam-param", str(ROOT / "cam_param"),
+        "--calib-session", calibration_identity(),
         "--pc-json", str(ROOT / "pc.json"),
         "--control-file", str(STATE / "tracker.control.json"),
         "--output", str(Path(args.session) / "tracker_output"),

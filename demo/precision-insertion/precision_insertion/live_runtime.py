@@ -281,6 +281,12 @@ def inspect_live_inputs(
             "remote_session_root": str(tracker.remote_session_root),
             "timeout_s": tracker.timeout_s,
             "stop_on_close": tracker.stop_on_close,
+            "calibration_dir": (
+                None if tracker.calibration_dir is None else
+                str(tracker.calibration_dir)),
+            "expected_calibration_session": (
+                tracker.expected_calibration_session),
+            "camera_ids": list(tracker.camera_ids),
             "scope": "configuration_only_no_ssh_or_tracker_start",
         }
     if robot_config_path is not None:

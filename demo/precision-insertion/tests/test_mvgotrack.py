@@ -1,4 +1,5 @@
 from pathlib import Path
+import importlib.util
 import json
 import sys
 import threading
@@ -76,6 +77,38 @@ def test_dinf_end_exchange_preserves_physical_tip(tmp_path):
     assert second["symmetry_reduction"]["end_exchange_applied"] is True
 
 
+def test_tracker_world_pose_uses_saved_world_from_robot_direction(tmp_path):
+    """C2R is T_world_robot, matching key/socket perception conversion."""
+    _assets(tmp_path)
+    angle = np.deg2rad(90.0)
+    world_robot = np.eye(4)
+    world_robot[:3, :3] = np.asarray([
+        [np.cos(angle), -np.sin(angle), 0.0],
+        [np.sin(angle), np.cos(angle), 0.0],
+        [0.0, 0.0, 1.0],
+    ])
+    world_robot[:3, 3] = [1.0, -0.4, 0.2]
+    robot_key = np.eye(4)
+    robot_key[:3, 3] = [0.10, 0.20, 0.30]
+    robot_socket = np.eye(4)
+    robot_socket[:3, 3] = [0.05, 0.10, 0.25]
+
+    result = symmetry_reduced_alignment(
+        tracked_pose_world=world_robot @ robot_key,
+        T_world_robot=world_robot,
+        T_robot_socket=robot_socket,
+        T_robot_key_nominal=robot_key,
+        object_root=tmp_path, key_object="key",
+        task_geometry={"key_frame": {
+            "tip_z_m": .08, "insertion_axis": [0., 0., 1.]}})
+
+    # Robot-frame tip [0.10, 0.20, 0.38] expressed in the socket frame.
+    np.testing.assert_allclose(result["tip_socket_m"], [.05, .10, .13])
+    np.testing.assert_allclose(
+        result["xy_correction_socket_m"], [-.05, -.10])
+    np.testing.assert_allclose(result["insertion_axis_socket"], [0., 0., 1.])
+
+
 def test_tracker_message_uses_native_valid_without_score_gate():
     row = MVGoTrackPose.from_message({
         "schema": "forgehand.tracked_pose.v1", "seq": 4,
@@ -85,6 +118,35 @@ def test_tracker_message_uses_native_valid_without_score_gate():
         "stamp_capture": 1., "stamp_publish": 2.,
     })
     assert row.valid and row.score == -100.
+
+
+def test_capture4_manager_disables_optional_tracker_loss_gates(
+        tmp_path, monkeypatch):
+    """The experiment-owned launcher must not reintroduce pose-quality gates."""
+    manager_path = Path(__file__).resolve().parents[1] / (
+        "capture4/manage_mvgotrack.py")
+    spec = importlib.util.spec_from_file_location(
+        "precision_capture4_mvgotrack_manager", manager_path)
+    assert spec is not None and spec.loader is not None
+    manager = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(manager)
+    remote = tmp_path / "remote"
+    calibration = remote / "cam_param"
+    calibration.mkdir(parents=True)
+    values = {camera: [camera] for camera in manager.CAMERAS}
+    (calibration / "intrinsics.json").write_text(json.dumps(values) + "\n")
+    (calibration / "extrinsics.json").write_text(json.dumps(values) + "\n")
+    monkeypatch.setattr(manager, "ROOT", remote)
+    args = SimpleNamespace(
+        endpoint="tcp://147.46.219.136:5591",
+        mesh=tmp_path / "key.obj", object="key",
+        init_pose=tmp_path / "T_world_key.txt",
+        session=tmp_path / "session")
+
+    command = manager._tracker_command(args)
+    for option in ("--min-score", "--max-workspace-m", "--max-jump-m"):
+        index = command.index(option)
+        assert command[index + 1] == "0"
 
 
 def test_same_trial_measurement_accepts_live_tracker_without_images(

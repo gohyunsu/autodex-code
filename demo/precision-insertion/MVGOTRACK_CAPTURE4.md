@@ -74,15 +74,44 @@ checkpoint, and the valid ZeroDex calibration:
 
 ```bash
 cd /home/hyunsu/autodex-code
+source demo/precision-insertion/config/zerodex_capture4.env.sh
 bash demo/precision-insertion/deploy_mvgotrack_capture4.sh \
   --source /path/to/MV-GoTrack \
   --checkpoint /path/to/gotrack_checkpoint.pt \
-  --cam-param /mnt/paradex2/hyunsu/precision_insertion/runtime/active_shared_data/AutoDex/precision_insertion/zerodex_capture4/calibration
+  --cam-param "$PRECISION_CALIB_DIR"
 ```
 
 The script preserves an already matching checkpoint, copies the four-camera
-calibration, installs the experiment-owned streamer/manager, and applies only
+calibration selected by the active kds-Z790 machine profile, installs the
+experiment-owned streamer/manager, and applies only
 the RTX 5060 Ti compatibility change to the isolated source copy.
+
+Do not substitute the older calibration snapshot under
+`runtime/active_shared_data/.../zerodex_capture4/calibration`: the live launch
+overrides that portable asset snapshot with `PRECISION_CALIB_DIR`, and the
+tracker must receive the same files.  Verify the deployment after a calibration
+change with:
+
+```bash
+sha256sum "$PRECISION_CALIB_DIR"/{intrinsics,extrinsics}.json
+ssh -p 77 capture4@147.46.219.136 \
+  'sha256sum /home/capture4/precision_insertion_mvgotrack/cam_param/{intrinsics,extrinsics}.json'
+```
+
+For a calibration-only refresh while the experiment-owned tracker is stopped:
+
+```bash
+source demo/precision-insertion/config/zerodex_capture4.env.sh
+bash demo/precision-insertion/sync_mvgotrack_calibration_capture4.sh
+```
+
+The capture4 manager publishes a canonical calibration identity computed from
+the four selected camera entries. The main runtime computes the same identity
+from `PRECISION_CALIB_DIR` and compares it with the first tracked pose before
+pickup. JSON formatting and unused camera entries are ignored; an actual
+intrinsic/extrinsic mismatch in one of the four tracker views is rejected as a
+coordinate-frame configuration error. This is not a tracking-confidence or
+task-outcome threshold.
 
 Status and logs:
 
@@ -100,18 +129,15 @@ Use the normal ZeroDex environment plus the MV profile:
 
 ```bash
 cd /home/hyunsu/autodex-code
-source demo/precision-insertion/config/zerodex_capture4.env.sh
-source demo/precision-insertion/config/experiments/mvgotrack_axis_alignment_capture4_remote_qwen.env.sh
-
-bash demo/precision-insertion/run_robot_pc.sh --check
+PRECISION_EXPERIMENT_PROFILE=mvgotrack_axis_alignment_capture4_remote_qwen.env.sh \
+  bash demo/precision-insertion/run_zerodex_capture4.sh --check
 ```
 
 With the commissioned robot services running and explicit motion permission:
 
 ```bash
-source demo/precision-insertion/config/zerodex_capture4.env.sh
-source demo/precision-insertion/config/experiments/mvgotrack_axis_alignment_capture4_remote_qwen.env.sh
-bash demo/precision-insertion/run_robot_pc.sh --run
+PRECISION_EXPERIMENT_PROFILE=mvgotrack_axis_alignment_capture4_remote_qwen.env.sh \
+  bash demo/precision-insertion/run_zerodex_capture4.sh --run
 ```
 
 The profile enables XY and axis correction and keeps the ordinary 10 mm
