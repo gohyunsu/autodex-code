@@ -47,6 +47,13 @@ issued during this audit.
   `~/calibration/zerodex_capture4/extrinsic/20261118_232125/solution_filtered`
   and hand-eye transform at
   `~/calibration/zerodex_capture4/handeye/20261118_233621/solution/C2R.npy`.
+  All four selected world-to-camera transforms and C2R reload as finite
+  SE(3) matrices (rotation determinant 1.0 and orthogonality error below
+  `5e-16`). Their intrinsics all declare 2048x1536 images. The current
+  board-free support surface was measured once from all four views and all 54
+  ChArUco corners; its saved plane RMS is 0.424 mm and its runtime height is
+  0.063360839 m in the robot frame. The board is measurement equipment for
+  this calibration artifact, not a live-perception dependency.
 - A read-only 2026-11-26 capture4 probe reported all isolated ports ready:
   `5009, 5480, 5481, 5482, 6894, 15006, 15007, 16893`. The four configured
   serials remain `26053248, 25322639, 25305462, 25322642`.
@@ -103,7 +110,7 @@ issued during this audit.
 | Item | Current evidence / next action |
 | --- | --- |
 | Current hardware execution | The local Franka daemon is not running. After CUDA is restored, start the RT daemon and select either `franka_gripper` (default) or `inspire`; the current audit intentionally issued no motion command. |
-| CUDA runtime | The PREEMPT_RT kernel and NVIDIA 535.309.01 modules are loaded and the RTX 3090 is bound to the driver, but `/dev/nvidia*` is absent, `nvidia-smi` fails and PyTorch reports zero CUDA devices. Run `sudo /sbin/ub-device-create --verbose`, then verify `nvidia-smi` before Qwen/SAM/curobo execution. |
+| CUDA runtime | The PREEMPT_RT kernel and NVIDIA 535.309.01 modules are loaded and the RTX 3090 is bound to the driver, but `/dev/nvidia*` is absent, `nvidia-smi` fails and PyTorch reports zero CUDA devices. An unprivileged `/sbin/ub-device-create --dry-run --verbose` detects the RTX 3090 and requests exactly `/dev/nvidiactl`, `/dev/nvidia0`, `/dev/nvidia-uvm`, `/dev/nvidia-uvm-tools` and `/dev/nvidia-modeset`; each creation fails only because it requires root. Run `sudo /sbin/ub-device-create --verbose`, then verify `nvidia-smi` before Qwen/SAM/curobo execution. |
 | Physical gripper/MV-GoTrack run | Code, assets, capture4 services and tracker deployment are present, but the new gripper pickup-to-insertion route and same-session tracker initialization have not been physically exercised. First run GPU cuRobo preflight, then initialize tracking from a fresh accepted key pose; do not substitute an arbitrary or stale tracker initializer. |
 | Reproduction bundle | The NAS is currently mounted read-only. A 2026-11-03 metadata audit found the live runtime view internally valid, but the archived checkout remains at `f0f9f1d` rather than the current branch, `nvdiffrast` is absent from the archived code inventory, two reset `source_evidence.json` files no longer match their recorded sizes, and twelve managed paths are unmanifested. The tested `--refresh-code-only` path rescans these managed trees as well as archiving all three code repositories, but applying it and then running full SHA256 verification must wait for a writable mount. |
 | VLM accuracy claim | Saved replay supports development, but class balance and independent held-out trials are insufficient for a general accuracy claim. Manual labels remain authoritative during data collection. |
