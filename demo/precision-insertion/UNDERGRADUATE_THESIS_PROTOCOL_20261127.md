@@ -184,6 +184,7 @@ than retrofitting a new hypothesis.
 | Controlled visual ablation | Existing 16-start corpus mixes sessions, policies and candidates; only two final positive labels exist. | Missing |
 | Independent pre-contact key pose | Largest repeated-session group has four wrist records but no valid multi-view metric key tip. | Missing |
 | Continuous MV-GoTrack path | Capture4 service, transport and runner integration exist. It has not initialized from a physical same-session key pose and run pickup-to-insertion. | Software ready; physical evidence missing |
+| Static ZeroDex preflight | Board-free support plane, four-camera calibration, gap-5 Franka-gripper catalog and capture4 MV-GoTrack endpoint pass the 2026-11-27 static preflight. Capture4 CUDA and the GoTrack checkpoint are readable. | Passed; not a physical tracking result |
 | Proprioceptive simulation | Gap-5 stable-seated-v2 development gate passed; gap-3 training remains active and gap-1 is locked. | Gap-5 simulation complete |
 | Proprioceptive real rollout | Shadow/transport and operator-grasp software exist; no policy-controlled real insertion has run. | Missing |
 | End-effector match | Vision runtime uses Franka gripper by default; proprioceptive assets declare Robotiq 2F-85. | Bridge contract missing |
@@ -211,6 +212,9 @@ than retrofitting a new hypothesis.
 
 The undergraduate thesis is not yet complete because gates 2--7 lack physical
 evidence.  Existing success videos remain valid system demonstrations.
+
+The exact gate-2 software audit and remaining physical evidence contract are
+recorded in `MVGOTRACK_COMMISSIONING_STATUS_20261127.md`.
 
 ## 12. Separation from the RSS program
 
