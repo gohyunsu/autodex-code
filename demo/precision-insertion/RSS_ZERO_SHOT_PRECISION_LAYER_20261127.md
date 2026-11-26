@@ -6,6 +6,8 @@ Relation to the cylinder thesis: separate scientific claim and apparatus
 
 Detailed estimator, controller and VLA interfaces are specified in
 `RSS_ACTIVE_CONSTRAINT_BELIEF_METHOD_20261127.md`.
+The nearest-work overlap and explicit no-go tests are maintained in
+`RSS_NOVELTY_STRESS_TEST_20261127.md`.
 
 This document corrects an overly narrow framing around insertion or a fixed
 pair of task families.  Insertion, dense extraction, gap placement and other

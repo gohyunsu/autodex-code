@@ -14,6 +14,7 @@ Authoritative specifications:
 - RSS method hypothesis: `RSS_ZERO_SHOT_PRECISION_LAYER_20261127.md`;
 - RSS method implementation contract:
   `RSS_ACTIVE_CONSTRAINT_BELIEF_METHOD_20261127.md`;
+- RSS novelty stress test: `RSS_NOVELTY_STRESS_TEST_20261127.md`;
 - RSS benchmark: `RSS_ZERO_SHOT_PRECISION_BENCHMARK_20261127.md`.
 
 ## 1. Claim tree
