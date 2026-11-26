@@ -20,7 +20,7 @@ programs rather than hard-code the two example motifs.
 | Proprioception-only policy | Cylinder contact-start PPO environment, training and evaluation exist in `blind-assembly-reproduction`. | Cylinder simulation baseline only |
 | Diverse geometry simulation | Current environment builds one circular key/socket contract and uses circular tip-edge labels. | Missing |
 | Dense narrow-passage simulation | No parameterized neighbouring-object layouts, forbidden-contact labels or disturbance metrics are present. | Missing |
-| Task constraint graph | A machine-readable scene schema now defines goals and allowed/forbidden contacts. | Schema only; compiler/controller absent |
+| Task constraint graph | Task-agnostic program and episode schemas, structural validation, exact graph-isomorphism comparison and Z1--Z4 split audit now exist. | Contract/audit implemented; generator/compiler/controller absent |
 | Fixed flange part mount | Existing models retain a gripper/held-key body and grasp randomization. | Missing clean primary apparatus/model |
 | Recessed interchangeable fixture | Existing precision assets center on protruding socket fixtures. | Missing |
 | Geometry-conditioned likelihood-ratio model | No scene-geometry encoder, ratio estimator or pose/contact-identity particle update was found. | Missing core method |
@@ -37,7 +37,7 @@ programs rather than hard-code the two example motifs.
 - transform, SE(3), and per-geometry symmetry utilities;
 - Franka control adapters and phase timing;
 - episode video/sensor persistence;
-- method-neutral episode schema;
+- method-neutral episode schema and `precision_layer` split-audit tooling;
 - failure/outcome evidence tooling where the physical success definition is
   replaced by the clean fixture contract.
 

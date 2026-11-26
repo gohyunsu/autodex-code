@@ -198,6 +198,18 @@ without insertion-specific coordinates or phases.  The older
 `config/research_episode.schema.json` remains the undergraduate/cylinder
 record and is not the RSS benchmark contract.
 
+The authoritative list of train/validation/test cases follows
+`config/precision_benchmark_index.schema.json`.  Audit it before training and
+again before producing final tables:
+
+```bash
+python -m precision_layer.audit path/to/precision_benchmark_index.json
+```
+
+The command returns a nonzero status for reused held-out geometry/layout or
+policy families, and for a test constraint graph that is exactly isomorphic
+to a training graph after arbitrary entity, stage and predicate ID renaming.
+
 ## 12. Real-trial protocol
 
 1. Freeze the physical manifestations and tolerance levels before final
