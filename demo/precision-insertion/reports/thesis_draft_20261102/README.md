@@ -4,6 +4,11 @@ This directory contains a formal thesis draft based on the physical success
 episode recorded on 2026-10-30. Incomplete evaluation is identified as
 preliminary experiments and future work inside the thesis structure.
 
+This draft predates the four-condition vision/proprioception study.  It is a
+pilot report, not the current experimental protocol.  The authoritative RQs,
+outcomes and completion gates are in
+[`UNDERGRADUATE_THESIS_PROTOCOL_20261127.md`](../../UNDERGRADUATE_THESIS_PROTOCOL_20261127.md).
+
 ## Outputs
 
 - `precision_insertion_thesis_ko.md`: editable source
@@ -53,4 +58,3 @@ google-chrome --headless --disable-gpu --no-sandbox \
   --print-to-pdf="$PWD/precision_insertion_thesis_ko.pdf" \
   "file://$PWD/precision_insertion_thesis_ko.html"
 ```
-

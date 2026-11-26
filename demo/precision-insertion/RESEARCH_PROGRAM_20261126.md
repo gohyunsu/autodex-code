@@ -97,47 +97,50 @@ failure map that identifies what remains unsolved.
 
 ### 3.2 Intermediate goal: undergraduate thesis
 
-After the diagnostic baselines, the undergraduate thesis should address one
-specific observed failure regime rather than claim a universal manipulation
-system.  The preferred working topic is:
+After the diagnostic baselines, the undergraduate thesis should address the
+phase boundary in the existing cylinder system rather than claim geometry or
+task generalization.  The preferred working topic is:
 
-> **Contact-Conditioned Residual Correction for 6D-Tracked Precision
-> Manipulation**
+> **Phase-Structured Visual and Proprioceptive Correction for Cylindrical
+> Precision Insertion**
 
-The thesis-scale method adds proprioceptive/contact correction only where the
-short-term results show that MV-GoTrack alignment is no longer sufficient.
-It may include a simple persistent XY bias update if repeated-trial evidence
-shows a stable bias.  It should not assume that such a bias exists before that
-measurement.
+The thesis compares nominal open loop, MV-GoTrack pre-contact correction, a
+frozen proprioceptive contact policy, and their fixed handoff under one
+physical outcome protocol.  The modules remain interpretable and the contact
+policy receives no visual pose.  A persistent XY bias is only an auxiliary
+ablation if repeated-trial evidence shows a stable component.
 
 The cylinder is an acceptable thesis testbed only if the claim concerns
 **phase-dependent observability and correction**, not category-level shape
 generalization.  The minimum thesis questions are:
 
-- **RQ-T1 (visual residual):** after continuous multi-view 6D tracking and
-  symmetry-aware pre-contact correction, how much task-frame residual remains
-  as visibility, target pose, grasp transform, and clearance change?
-- **RQ-T2 (contact value):** conditioned on the same measured pre-contact
-  residual distribution, when does a proprioceptive contact policy improve
-  insertion success over visual alignment followed by a fixed nominal stroke?
-- **RQ-T3 (explicit state):** does supervising the proprioceptive history with
-  a physically meaningful residual/contact-mode estimate improve held-out
-  clearance and perturbation performance over an equally sized implicit
-  history policy?
+- **RQ-T1 (visual value):** does continuous multi-view 6D correction improve
+  physical outcome over nominal open loop as offset and clearance become
+  harder?
+- **RQ-T2 (contact value):** from the same registered contact-start
+  distribution, does a frozen proprioceptive policy improve outcome over a
+  fixed guarded stroke?
+- **RQ-T3 (handoff value):** does visual correction followed by the same
+  proprioceptive policy outperform either single-modality condition?
+- **RQ-T4 (observability boundary):** which failures are resolved before
+  contact and which remain after contact under occlusion and mechanical
+  ambiguity?
 
-The preferred thesis method is therefore a **fixed-handoff residual
-controller**, not a full learned multimodal router.  MV-GoTrack supplies the
-last observable symmetry-reduced residual.  After first contact, a recurrent
-proprioceptive estimator updates a residual/contact-mode latent, and a local
-policy produces bounded task-frame corrections.  Simulator-only privileged
-pose/contact labels may supervise the estimator during training but are not
-actor inputs at deployment.  This makes the thesis contribution falsifiable:
-if RQ-T2 or RQ-T3 is negative, the result is an empirical boundary rather than
-an unsupported fusion claim.
+The preferred thesis method is therefore a **fixed-handoff controller**, not
+a full learned multimodal router.  MV-GoTrack supplies free-space feedback;
+after a shared guarded contact approach, a frozen recurrent proprioceptive
+policy owns local correction.  Simulator-only privileged pose/contact labels
+are never actor inputs at deployment.  If the hybrid does not beat the two
+single-modality conditions, the thesis reports that empirical boundary rather
+than an unsupported fusion claim.
 
 The thesis must vary at least clearance, target pose, object-in-gripper
 transform, and contact-stage visibility.  A result from one nominal upright
 cylinder pose is a system demonstration, not a thesis result.
+
+The authoritative four-condition protocol, outcome definitions, evidence
+audit and completion gates are in
+`UNDERGRADUATE_THESIS_PROTOCOL_20261127.md`.
 
 ### 3.3 Long-term goal: RSS-targeted method
 
