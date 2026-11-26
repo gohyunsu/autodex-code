@@ -84,6 +84,12 @@ activation and contact modes are categorical. Symmetry is represented by
 equivalence classes in the geometry contract rather than duplicated as
 conflicting pose modes.
 
+For continuous axial symmetry, pose equality compares the task-relevant axis
+and translation while quotienting axial yaw. If the two object ends are also
+physically interchangeable, axis sign is quotiented explicitly; otherwise the
+axis remains directional. This declaration belongs to geometry/predicate
+parameters and never follows from a task name.
+
 The exported belief token for constraint `k` is
 
 ```text
@@ -308,3 +314,10 @@ The current `precision_layer.evaluator` implements the backend-independent
 signed-margin vocabulary. It consumes metric evidence supplied by a simulator,
 CAD engine or real metrology backend; it is not itself a physics engine. This
 keeps the predicate semantics frozen while the physics backend is replaced.
+
+`precision_layer.mujoco_adapter` provides the first declarative backend: named
+MuJoCo frames and geom pairs are mapped into the same relative-transform,
+signed-separation, displacement and manifold-distance evidence without task
+dispatch. The existing cylinder reproduction can therefore be used as a pilot
+data source, while RSS geometry diversity still requires a new procedural
+world generator.

@@ -50,7 +50,7 @@ cross-manifestation real evidence.
 | U4: commissioning pilot | blinded outcome labels and invalid-trial accounting | pilot estimates effect size, runtime and invalid rate without entering the final analysis | missing |
 | U5: undergraduate final study | frozen randomized `O/V/P/VP` matrix | preregistered trial count, paired evidence, Wilson intervals and declared contrasts | missing |
 | R0: task-agnostic program contract | constraint-program schema and split audit | structural tests plus rejection of Z1--Z4 leakage | implemented and unit-tested; no generated benchmark corpus yet |
-| R1: procedural constraint world | generator for geometry, layouts, graph compositions and corrupted nominal trajectories | train/validation/test index whose joint hold-out passes the leakage audit | structural generator and backend-independent margin evaluator exist; physics geometry, trajectories and privileged evidence backend are missing |
+| R1: procedural constraint world | generator for geometry, layouts, graph compositions and corrupted nominal trajectories | train/validation/test index whose joint hold-out passes the leakage audit | structural generator, margin evaluator and declarative MuJoCo evidence adapter exist; the adapter matches the independent radial metric in one cylinder pilot, but procedural held-out geometry and trajectories are missing |
 | R2: active-constraint identifiability | point-state, raw-history and explicit-belief estimators | calibrated margin/contact predictions on held-out graph compositions | missing |
 | R3: decision value of belief | matched controllers and action/time budgets | posterior-aware controller beats point-state MPC and implicit recurrent residual | missing |
 | R4: policy-agnostic zero-shot transfer | at least three upstream interfaces with one policy class held out | the same frozen layer improves planner, imitation/diffusion and held-out VLA/policy class | missing |
@@ -145,6 +145,12 @@ unrelated task-specific success criteria.
    explicit constraint belief on held-out margin/contact inference;
 4. proceed to analytical posterior-aware constrained control only after the
    identifiability and calibration gate passes.
+
+The current MuJoCo adapter can be checked against the independent cylinder
+environment with `scripts/precision_layer/validate_blind_assembly_adapter.py`.
+That check validates frame and metric semantics only. It does not pass R1,
+because one cylinder family contains neither the required geometry diversity
+nor held-out constraint compositions.
 
 ## 8. Completion rule
 

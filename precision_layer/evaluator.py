@@ -58,6 +58,16 @@ def _rotation_angle(rotation: np.ndarray) -> float:
     return math.acos(cosine)
 
 
+def _unit_vector(value: Sequence[float], name: str) -> np.ndarray:
+    vector = np.asarray(value, dtype=float)
+    if vector.shape != (3,) or not np.isfinite(vector).all():
+        raise ValueError(f"{name} must be a finite 3-vector")
+    norm = float(np.linalg.norm(vector))
+    if norm <= 0:
+        raise ValueError(f"{name} must be nonzero")
+    return vector / norm
+
+
 @dataclass(frozen=True)
 class ConstraintEvidence:
     """Metric evidence supplied by a simulator, CAD, or real-world backend."""
@@ -104,7 +114,30 @@ def evaluate_predicate(predicate: Mapping, evidence: ConstraintEvidence) -> Marg
             raise ValueError("target_transform must be a finite 4x4 matrix")
         residual = np.linalg.inv(target) @ actual
         translation_error = float(np.linalg.norm(residual[:3, 3]))
-        rotation_error = _rotation_angle(residual[:3, :3])
+        orientation_mode = parameters.get("orientation_mode", "full_rotation")
+        if orientation_mode == "full_rotation":
+            rotation_error = _rotation_angle(residual[:3, :3])
+        elif orientation_mode == "axis_alignment":
+            local_axis = _unit_vector(
+                parameters.get("local_axis", [0.0, 0.0, 1.0]),
+                "local_axis")
+            if "target_axis" in parameters:
+                target_axis = _unit_vector(
+                    parameters["target_axis"], "target_axis")
+            else:
+                # target_transform expresses the desired source pose in the
+                # reference frame.  In the absence of an explicit target
+                # axis, carry the declared source-local axis through that
+                # desired rotation.  This keeps non-identity pose targets
+                # consistent while quotienting only axial yaw.
+                target_axis = target[:3, :3] @ local_axis
+            actual_axis = actual[:3, :3] @ local_axis
+            cosine = float(np.clip(np.dot(actual_axis, target_axis), -1.0, 1.0))
+            if parameters.get("allow_axis_sign_flip", False):
+                cosine = abs(cosine)
+            rotation_error = math.acos(cosine)
+        else:
+            raise ValueError(f"unsupported orientation_mode: {orientation_mode}")
         rotation_scale = float(parameters.get("rotation_length_scale_m_per_rad", 0.05))
         if not math.isfinite(rotation_scale) or rotation_scale < 0:
             raise ValueError("rotation_length_scale_m_per_rad must be non-negative")

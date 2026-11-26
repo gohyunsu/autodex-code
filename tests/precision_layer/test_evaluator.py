@@ -66,6 +66,65 @@ def test_pose_equality_combines_translation_and_rotation_metric():
     assert result.normalized_margin == pytest.approx(0.5)
 
 
+def test_axis_alignment_ignores_axial_yaw_and_declares_sign_symmetry():
+    yaw = np.eye(4)
+    yaw[:3, :3] = np.array([
+        [0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ])
+    parameters = {
+        "orientation_mode": "axis_alignment",
+        "local_axis": [0.0, 0.0, 1.0],
+        "target_axis": [0.0, 0.0, 1.0],
+        "rotation_length_scale_m_per_rad": 0.05,
+    }
+    aligned = evaluate_predicate(
+        predicate("pose_equality", ("body", "goal"), 0.001, parameters),
+        ConstraintEvidence(relative_transforms={("body", "goal"): yaw}))
+    assert aligned.satisfied
+    assert aligned.signed_margin == pytest.approx(0.001)
+
+    flipped = yaw.copy()
+    flipped[:3, :3] = np.diag([1.0, -1.0, -1.0])
+    sign_symmetric = dict(parameters, allow_axis_sign_flip=True)
+    equivalent = evaluate_predicate(
+        predicate("pose_equality", ("body", "goal"), 0.001, sign_symmetric),
+        ConstraintEvidence(relative_transforms={("body", "goal"): flipped}))
+    assert equivalent.satisfied
+
+    directional = evaluate_predicate(
+        predicate("pose_equality", ("body", "goal"), 0.001, parameters),
+        ConstraintEvidence(relative_transforms={("body", "goal"): flipped}))
+    assert not directional.satisfied
+
+
+def test_axis_alignment_uses_target_transform_rotation_by_default():
+    target = np.eye(4)
+    target[:3, :3] = np.array([
+        [0.0, 0.0, 1.0],
+        [0.0, 1.0, 0.0],
+        [-1.0, 0.0, 0.0],
+    ])
+    axial_yaw = np.array([
+        [0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ])
+    actual = target.copy()
+    actual[:3, :3] = target[:3, :3] @ axial_yaw
+    result = evaluate_predicate(
+        predicate("pose_equality", ("body", "goal"), 0.001, {
+            "target_transform": target.tolist(),
+            "orientation_mode": "axis_alignment",
+            "local_axis": [0.0, 0.0, 1.0],
+            "rotation_length_scale_m_per_rad": 0.05,
+        }),
+        ConstraintEvidence(relative_transforms={("body", "goal"): actual}))
+    assert result.satisfied
+    assert result.signed_margin == pytest.approx(0.001)
+
+
 def test_missing_or_nonmetric_evidence_is_not_silently_fabricated():
     with pytest.raises(MissingConstraintEvidence, match="pair separation"):
         evaluate_predicate(
