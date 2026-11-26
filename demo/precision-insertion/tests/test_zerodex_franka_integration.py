@@ -105,6 +105,28 @@ def test_factory_routes_process_only_and_restores_after_close(tmp_path, monkeypa
     np.testing.assert_allclose(FR3_CLEAR_VIEW, original_clear_view)
 
 
+def test_factory_gripper_route_does_not_import_inspire_modbus(tmp_path, monkeypatch):
+    from paradex.utils.system import network_info
+
+    monkeypatch.setenv("PRECISION_END_EFFECTOR", "franka_gripper")
+    monkeypatch.setattr(route, "load_franka_integration_config",
+                        lambda *args, **kwargs: {
+                            "held_motion_monitor": None, "lift_monitor": None})
+    monkeypatch.setattr(route, "inspect_zerodex_daemon", lambda: {})
+    monkeypatch.setattr(route, "_quiet_curobo_world_mesh_debug", lambda: lambda: None)
+    monkeypatch.setattr(route, "install_zerodex_modbus_compat",
+                        lambda: pytest.fail("gripper route imported Inspire Modbus"))
+    original = network_info["franka"]
+    monkeypatch.setattr(route, "stock_factory", lambda options:
+                        LiveRuntimeIntegration(
+                            clear_view=object(), build_components=lambda live: (),
+                            close=lambda: None))
+
+    integration = route.factory(_options(tmp_path))
+    integration.close()
+    assert network_info["franka"] == original
+
+
 def test_factory_restores_process_route_if_stock_factory_fails(tmp_path, monkeypatch):
     from paradex.utils.system import network_info
 

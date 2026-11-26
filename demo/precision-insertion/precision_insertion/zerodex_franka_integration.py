@@ -19,6 +19,7 @@ from autodex.utils.robot_config import FR3_CLEAR_VIEW
 
 from .franka_integration import factory as stock_factory
 from .franka_integration import load_franka_integration_config
+from .end_effector import end_effector_spec
 from .live_runtime import LiveRuntimeIntegration, RunLiveOptions
 from .stock_daemon_identity import _ports_and_timeout
 
@@ -138,7 +139,12 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     # this single-session process avoids editing the shared network.json.
     from paradex.utils.system import network_info
 
-    install_zerodex_modbus_compat()
+    # The stock Franka gripper is served by the FR3 daemon itself and has no
+    # Modbus dependency.  Keep the compatibility alias exclusively on the
+    # preserved Inspire route so a gripper-only ZeroDex host does not need to
+    # import or install the Inspire transport stack.
+    if end_effector_spec().name == "inspire":
+        install_zerodex_modbus_compat()
     restore_curobo_print = _quiet_curobo_world_mesh_debug()
     previous_clear_view = FR3_CLEAR_VIEW.copy()
     FR3_CLEAR_VIEW[:] = clear_view_q
