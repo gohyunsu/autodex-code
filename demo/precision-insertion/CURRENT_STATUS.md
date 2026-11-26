@@ -36,6 +36,13 @@ issued during this audit.
   Inspire retains 126 catalogued and 114 eligible candidates. Both report
   four configured cameras, board-free mode, no legacy runtime path and no NAS
   reference outside `/mnt/paradex2/hyunsu`.
+- The explicit
+  `PRECISION_EXPERIMENT_PROFILE=mvgotrack_axis_alignment_capture4.env.sh`
+  preflight also passes with the default `franka_gripper` route. It resolves
+  `xy_estimator=mvgotrack`, the capture4 endpoint at port 5591, the isolated
+  remote manager/session paths and both tabletop grasp candidates. Selecting
+  `PRECISION_END_EFFECTOR=inspire` remains an independent supported route; it
+  is not removed or silently translated to a parallel-gripper command.
 - The current calibration profile resolves the final extrinsic solution at
   `~/calibration/zerodex_capture4/extrinsic/20261118_232125/solution_filtered`
   and hand-eye transform at
@@ -43,9 +50,21 @@ issued during this audit.
 - A read-only 2026-11-26 capture4 probe reported all isolated ports ready:
   `5009, 5480, 5481, 5482, 6894, 15006, 15007, 16893`. The four configured
   serials remain `26053248, 25322639, 25305462, 25322642`.
-- The source-boundary audit reports zero stock-entrypoint changes and zero
-  unexpected shared-runtime changes.
+- A later read-only capture4 check enumerated those same four cameras and
+  reported `stream_pid=null`, `tracker_pid=null`. This is the expected idle
+  state before a same-session accepted key pose initializes tracking; the
+  audit did not start MV-GoTrack from a stale or fabricated pose.
+- The source-boundary audit run from a clean shared clone of commit
+  `b76ad347ad266f3ae05c19abe0f6f16d4f29913c` reports zero stock-entrypoint
+  changes and zero unexpected shared-runtime changes. This avoids treating
+  unrelated calibration work in the development checkout as part of the
+  precision runtime.
 - The complete demo test suite last passed with **1614 passed, 4 skipped**.
+- A focused 2026-11-26 completion audit additionally passed **167 tests**
+  covering board-free key/support-plane conditioning, analytic gripper
+  grasps, planner/preflight assembly, MV-GoTrack initialization and pose use,
+  symmetry-aware endpoint/axis correction, insertion/release/outcome/retry,
+  and both end-effector executors.
 - Real 5 mm-gap episodes exercised the full pickup/transfer/insertion/release
   route. In particular, attempts
   `attempt_3c8ff1b830d347a2b8c45aa7ae1a5363` and
