@@ -74,15 +74,29 @@ checkpoint, and the valid ZeroDex calibration:
 
 ```bash
 cd /home/hyunsu/autodex-code
+source demo/precision-insertion/config/zerodex_capture4.env.sh
 bash demo/precision-insertion/deploy_mvgotrack_capture4.sh \
   --source /path/to/MV-GoTrack \
   --checkpoint /path/to/gotrack_checkpoint.pt \
-  --cam-param /mnt/paradex2/hyunsu/precision_insertion/runtime/active_shared_data/AutoDex/precision_insertion/zerodex_capture4/calibration
+  --cam-param "$PRECISION_CALIB_DIR"
 ```
 
 The script preserves an already matching checkpoint, copies the four-camera
-calibration, installs the experiment-owned streamer/manager, and applies only
+calibration selected by the active kds-Z790 machine profile, installs the
+experiment-owned streamer/manager, and applies only
 the RTX 5060 Ti compatibility change to the isolated source copy.
+
+Do not substitute the older calibration snapshot under
+`runtime/active_shared_data/.../zerodex_capture4/calibration`: the live launch
+overrides that portable asset snapshot with `PRECISION_CALIB_DIR`, and the
+tracker must receive the same files.  Verify the deployment after a calibration
+change with:
+
+```bash
+sha256sum "$PRECISION_CALIB_DIR"/{intrinsics,extrinsics}.json
+ssh -p 77 capture4@147.46.219.136 \
+  'sha256sum /home/capture4/precision_insertion_mvgotrack/cam_param/{intrinsics,extrinsics}.json'
+```
 
 Status and logs:
 
