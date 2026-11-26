@@ -220,21 +220,58 @@ def _write_configs() -> None:
     source_spheres = CONFIG_ROOT / "spheres/fr3_inspire.yml"
     prefix = source_spheres.read_text(encoding="utf-8").split(
         "  base_link:\n", 1)[0]
+    # Reuse cuRobo's stock Franka hand profile with only link names changed.
+    # The previous two large palm spheres extended well outside the actual
+    # mesh and falsely rejected both supported tabletop grasps at the table.
     hand_spheres = """  fr3_hand:
-  - center: [0.0, 0.0, 0.035]
-    radius: 0.055
-  - center: [0.0, 0.0, 0.075]
-    radius: 0.045
+  - center: [0.0, -0.075, 0.01]
+    radius: 0.03
+  - center: [0.0, -0.045, 0.01]
+    radius: 0.03
+  - center: [0.0, -0.015, 0.01]
+    radius: 0.03
+  - center: [0.0, 0.015, 0.01]
+    radius: 0.03
+  - center: [0.0, 0.045, 0.01]
+    radius: 0.03
+  - center: [0.0, 0.075, 0.01]
+    radius: 0.03
+  - center: [0.0, 0.065, -0.02]
+    radius: 0.03
+  - center: [0.0, -0.075, 0.03]
+    radius: 0.03
+  - center: [0.0, -0.045, 0.03]
+    radius: 0.03
+  - center: [0.0, -0.015, 0.03]
+    radius: 0.03
+  - center: [0.0, 0.015, 0.03]
+    radius: 0.03
+  - center: [0.0, 0.045, 0.03]
+    radius: 0.03
+  - center: [0.0, 0.075, 0.03]
+    radius: 0.03
+  - center: [0.0, -0.075, 0.05]
+    radius: 0.02
+  - center: [0.0, -0.045, 0.05]
+    radius: 0.02
+  - center: [0.0, -0.015, 0.05]
+    radius: 0.02
+  - center: [0.0, 0.015, 0.05]
+    radius: 0.02
+  - center: [0.0, 0.045, 0.05]
+    radius: 0.02
+  - center: [0.0, 0.075, 0.05]
+    radius: 0.02
   fr3_leftfinger:
-  - center: [0.0, 0.0, 0.025]
-    radius: 0.015
-  - center: [0.0, 0.0, 0.05]
-    radius: 0.015
+  - center: [0.0, 0.01, 0.04]
+    radius: 0.01
+  - center: [0.0, 0.01, 0.014]
+    radius: 0.01
   fr3_rightfinger:
-  - center: [0.0, 0.0, 0.025]
-    radius: 0.015
-  - center: [0.0, 0.0, 0.05]
-    radius: 0.015
+  - center: [0.0, -0.01, 0.04]
+    radius: 0.01
+  - center: [0.0, -0.01, 0.014]
+    radius: 0.01
 """
     SPHERES_OUTPUT.write_text(prefix + hand_spheres, encoding="utf-8")
 

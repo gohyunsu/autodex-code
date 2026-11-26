@@ -227,9 +227,15 @@ upload.
   after reboot. In that state run `sudo /sbin/ub-device-create --verbose`,
   then verify `nvidia-smi`; this creates device nodes only and does not start
   the robot or precision pipeline. The nodes and PyTorch CUDA access were
-  verified on 2026-11-27. The latest full-chain gripper preflight then reached
-  cuRobo world construction but exhausted the remaining RTX 3090 memory while
-  another process occupied 6.62 GB; rerun it after that unrelated job exits.
+  verified on 2026-11-27. An initial 1,024-seed OOM exposed that explicit
+  checkout-local planner YAMLs had selected the generic custom-robot
+  numerics. The ZeroDex factory now explicitly preserves the FR3 profile's
+  32 trajectory-optimization seeds. With that fix, real cuRobo planning ran
+  while the unrelated 6.62 GB process remained resident; a hypothetical
+  `side_down` key passed collision, IK, approach and held lift. Its synthetic
+  transfer target remained unreachable and is not physical insertion proof.
+  The device nodes later disappeared again while the modules stayed loaded,
+  so repeat the node-creation command if `nvidia-smi` fails.
 - Robot, Inspire hand, FCI and the Franka daemon are required only for
   `--run`/`--plan-only`.
 - Do not start a second capture4 adapter if another experiment owns its

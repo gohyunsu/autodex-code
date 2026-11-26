@@ -18,7 +18,7 @@ audit.
 | ZeroDex machine binding | `zerodex_capture4.env.sh` owns capture4 serials/host, local cache paths, NAS namespace and the straight-mount FR3 profile. `zerodex_franka_integration.py` changes routing only inside the process. |
 | Board-free perception | The default launcher records `scene_mode=board_free`, uses the commissioned robot/camera extrinsics and measured table plane, and removes board-ID/corner fields from the effective launch. Socket and key prompts do not require an object to be “on a board,” and both upright and side-down cylindrical-key conditioning use the same measured support plane. |
 | End-effector modes | ZeroDex defaults to `franka_gripper`; `PRECISION_END_EFFECTOR=inspire` preserves the original Inspire/BODex route. Each mode has an independent URDF, joint width and candidate namespace. Gripper startup does not import Inspire Modbus. The Franka executor, ParaDex client and selected daemon share the metric-width `open_gripper`/`grasp`/feedback protocol. |
-| Tabletop grasp coverage | The gripper catalogue contains one deterministic analytic cylindrical grasp for each supported tabletop class (`end_down`/`000` and `side_down`/`001`). Both retain the same endpoint collision contract; Inspire keeps its screened BODex catalogue. |
+| Tabletop grasp coverage | The gripper catalogue contains one deterministic analytic cylindrical grasp for each supported tabletop class (`end_down`/`000` and `side_down`/`001`). Both retain the same endpoint collision contract; Inspire keeps its screened BODex catalogue. The FR3/gripper planner uses cuRobo's stock Franka palm/finger collision-sphere profile rather than the former two-sphere palm approximation. |
 | Four-camera evidence | Every checkpoint captures all four commissioned cameras. Socket-pose inliers and measured residuals may select a smaller inference subset; camera evidence is not discarded or permanently blacklisted. |
 | Full action loop | The active profile supplies all ten stage handlers: key planning, pickup, lift, held relation, transfer/insertion, retry diagnosis, held return, transfer recovery, repose planning and repose execution. |
 | Same-trial correction | Pre-insertion capture, metric endpoint/partial-shape observation, bounded wrist correction, recapture and measured-motion feedback run before the first insertion stroke. The active profile permits a 10 mm per-update step and has no cumulative XY cap. |
@@ -73,7 +73,16 @@ audit.
   changes and zero unexpected shared-runtime changes. This avoids treating
   unrelated calibration work in the development checkout as part of the
   precision runtime.
-- The complete demo test suite last passed with **1614 passed, 4 skipped**.
+- The complete demo test suite last passed with **1617 passed, 4 skipped**.
+- A real local-CUDA synthetic gripper diagnostic now preserves the FR3
+  profile's 32 trajectory-optimization seeds even though the ZeroDex planner
+  binds explicit checkout-local robot YAML paths. The former generic
+  explicit-YAML fallback selected 1,024 seeds and exhausted GPU memory. With
+  the corrected 32-seed setting and stock Franka hand/finger collision
+  spheres, the `side_down` analytic grasp passed table/world collision, IK,
+  approach and 10 cm held lift in two hypothetical workspaces. The following
+  transfer query was unreachable in those arbitrary synthetic socket
+  placements, so this is pickup/lift evidence, not a full insertion result.
 - A focused 2026-11-26 completion audit additionally passed **167 tests**
   covering board-free key/support-plane conditioning, analytic gripper
   grasps, planner/preflight assembly, MV-GoTrack initialization and pose use,
@@ -117,7 +126,7 @@ audit.
 | Item | Current evidence / next action |
 | --- | --- |
 | Current hardware execution | The local Franka daemon is not running. After CUDA is restored, start the RT daemon and select either `franka_gripper` (default) or `inspire`; the current audit intentionally issued no motion command. |
-| Local cuRobo GPU preflight | `/dev/nvidia*`, `nvidia-smi` and precision-environment PyTorch CUDA now pass on the PREEMPT_RT host. The first gripper preflight exposed and fixed a stale `~/shared_data/AutoDex` planner-YAML fallback. The rerun reached real cuRobo world construction but OOMed because an unrelated process held 6.62 GB while cuRobo held 15.71 GB and requested 3.43 GB more. Rerun the same read-only preflight after that process exits; do not terminate it automatically. |
+| Local cuRobo GPU preflight | The first gripper preflight exposed and fixed both a stale `~/shared_data/AutoDex` planner-YAML fallback and the explicit-YAML 1,024-seed regression. With the restored FR3 32-seed profile and stock Franka gripper collision spheres, the real local-CUDA diagnostic passed `side_down` pickup, approach and held lift while the unrelated 6.62 GB process remained resident. It then reported `transfer_unreachable` for the hypothetical socket placement; no physical scene or robot command was involved. At the end of this audit the NVIDIA kernel modules were loaded but `/dev/nvidia*` had disappeared again, so run `sudo /sbin/ub-device-create --verbose` before the next CUDA query. |
 | Physical gripper/MV-GoTrack run | Code, assets, capture4 services and tracker deployment are present, but the new gripper pickup-to-insertion route and same-session tracker initialization have not been physically exercised. First run GPU cuRobo preflight, then initialize tracking from a fresh accepted key pose; do not substitute an arbitrary or stale tracker initializer. |
 | Reproduction bundle | The NAS is currently mounted read-only. A 2026-11-03 metadata audit found the live runtime view internally valid, but the archived checkout remains at `f0f9f1d` rather than the current branch, `nvdiffrast` is absent from the archived code inventory, two reset `source_evidence.json` files no longer match their recorded sizes, and twelve managed paths are unmanifested. The tested `--refresh-code-only` path rescans these managed trees as well as archiving all three code repositories, but applying it and then running full SHA256 verification must wait for a writable mount. |
 | VLM accuracy claim | Saved replay supports development, but class balance and independent held-out trials are insufficient for a general accuracy claim. Manual labels remain authoritative during data collection. |
