@@ -54,6 +54,20 @@ class PreparedLiveKeyTrial:
 
 
 @dataclass(frozen=True)
+class ObservedLiveKey:
+    """Accepted same-session key pose and exposure-time robot state.
+
+    This boundary exists before candidate planning so a continuous tracker can
+    start from the measured pose while cuRobo performs the offline preflight.
+    It is observation evidence only and does not authorize pickup.
+    """
+
+    observation: KeyPoseObservation
+    state: LiveRobotState
+    key_evidence_dir: Path
+
+
+@dataclass(frozen=True)
 class ReturnedKeyCapture:
     observation: KeyPoseObservation
     state: LiveRobotState
@@ -321,6 +335,7 @@ def prepare_next_live_key(
     registered_key_assistance: RegisteredKeyAssistance | None = None,
     capture_initial_visual: Callable[[], object] | None = None,
     before_preflight: Callable[[], None] | None = None,
+    on_observation: Callable[[ObservedLiveKey], None] | None = None,
 ) -> PreparedLiveKeyTrial:
     """Capture, admit, save, and preflight one fresh tabletop key.
 
@@ -350,8 +365,9 @@ def prepare_next_live_key(
     if not callable(acquisition_metadata_for_request) or not callable(
             state_for_observation):
         raise TypeError("camera evidence and exposure-time state providers are required")
-    if before_preflight is not None and not callable(before_preflight):
-        raise TypeError("before_preflight must be callable")
+    if ((before_preflight is not None and not callable(before_preflight)) or
+            (on_observation is not None and not callable(on_observation))):
+        raise TypeError("preflight and observation callbacks must be callable")
     capture_source = Path(capture_root).expanduser()
     if not capture_source.is_absolute() or not capture_source.is_dir():
         raise ValueError("key capture root must be an existing absolute shared directory")
@@ -473,6 +489,11 @@ def prepare_next_live_key(
         observation.require_state_alignment(
             state_timestamp_s=state.sample_timestamp_s,
             maximum_skew_s=max_key_state_skew_s)
+        if on_observation is not None:
+            # Start continuous tracking from the accepted absolute pose before
+            # candidate planning.  The callback may launch asynchronous work;
+            # pickup remains impossible until the returned preflight is bound.
+            on_observation(ObservedLiveKey(observation, state, output))
         if before_preflight is not None:
             before_preflight()
         with timed("key.candidate_preflight", phase="planning", kind="planning"):

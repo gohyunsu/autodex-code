@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass, field
 import json
 import os
@@ -13,7 +15,7 @@ from uuid import uuid4
 import numpy as np
 
 from .assets import AssetPaths
-from .live_key_trial import PreparedLiveKeyTrial
+from .live_key_trial import ObservedLiveKey, PreparedLiveKeyTrial
 from .mvgotrack import MVGoTrackSubscriber, alignment_from_tracker
 from .timing_profile import timed
 
@@ -74,6 +76,9 @@ class MVGoTrackRuntime:
     _last_seq: int = field(default=-1, init=False)
     _remote_session: Path | None = field(default=None, init=False)
     _initialized_capture_id: str | None = field(default=None, init=False)
+    _initialization_pool: ThreadPoolExecutor | None = field(
+        default=None, init=False)
+    _initialization_future: Future | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         self.config.validate()
@@ -92,7 +97,7 @@ class MVGoTrackRuntime:
             check=True, text=True, capture_output=True,
             timeout=max(20., self.config.timeout_s + 10.))
 
-    def initialize(self, prepared: PreparedLiveKeyTrial) -> None:
+    def initialize(self, prepared: ObservedLiveKey | PreparedLiveKeyTrial) -> None:
         observation = prepared.observation
         if observation.family != "cylinder":
             raise ValueError("MV-GoTrack mode is defined for the cylindrical key")
@@ -150,6 +155,38 @@ class MVGoTrackRuntime:
             json.dumps(first.to_record(), indent=2, sort_keys=True) + "\n",
             encoding="utf-8")
 
+    def begin_initialize(self, observed: ObservedLiveKey) -> None:
+        """Start capture4 tracking as soon as the absolute key pose is accepted.
+
+        Remote startup and the first tracker frame overlap cuRobo candidate
+        planning.  ``await_initialized`` joins this exact future before the
+        action loop can expose a pickup decision.
+        """
+        if not isinstance(observed, ObservedLiveKey):
+            raise TypeError("MV-GoTrack initialization needs an observed live key")
+        prior = self._initialization_future
+        if prior is not None:
+            if not prior.done():
+                raise RuntimeError("MV-GoTrack initialization is already running")
+            prior.result()
+        if self._initialization_pool is None:
+            self._initialization_pool = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="precision-mvgotrack-init")
+        context = copy_context()
+        self._initialization_future = self._initialization_pool.submit(
+            context.run, self.initialize, observed)
+
+    def await_initialized(self, prepared: PreparedLiveKeyTrial) -> None:
+        """Join the tracker initializer after planning and before pickup."""
+        if not isinstance(prepared, PreparedLiveKeyTrial):
+            raise TypeError("MV-GoTrack join needs a prepared live key trial")
+        future = self._initialization_future
+        if future is None:
+            raise RuntimeError("MV-GoTrack initialization was not started")
+        future.result()
+        if self._initialized_capture_id != prepared.observation.capture_id:
+            raise RuntimeError("MV-GoTrack initialized another key capture")
+
     def measure(self, *, runner) -> dict:
         if runner is not self.runner or self._subscriber is None:
             raise RuntimeError("MV-GoTrack has not been initialized for this session")
@@ -164,9 +201,22 @@ class MVGoTrackRuntime:
 
     def close(self) -> None:
         try:
+            future = self._initialization_future
+            if future is not None:
+                # Do not race a remote stop against an in-flight start. Any
+                # initialization error has already surfaced at the pre-pickup
+                # join on normal execution; cleanup still owns termination.
+                try:
+                    future.result()
+                except BaseException:
+                    pass
             if self.config.stop_on_close and self._remote_session is not None:
                 self._ssh(str(self.config.remote_manager), "stop", check=False)
         finally:
             if self._subscriber is not None:
                 self._subscriber.close()
                 self._subscriber = None
+            if self._initialization_pool is not None:
+                self._initialization_pool.shutdown(wait=True)
+                self._initialization_pool = None
+            self._initialization_future = None

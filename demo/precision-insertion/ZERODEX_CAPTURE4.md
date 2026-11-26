@@ -135,6 +135,25 @@ the measured joint-vector width to keep their FK and opening commands in the
 same selected contract.  No conversion from an Inspire grasp to a gripper
 grasp (or the reverse) is attempted.
 
+### MV-GoTrack lifetime
+
+In the tracker experiment profile, the accepted same-session SAM3+FoundPose
+pose is the only absolute initializer. As soon as that pose and its
+exposure-time robot state are admitted, the runtime copies the key pose and
+mesh to the isolated capture4 tracker and starts or reinitializes it. This is
+launched asynchronously so capture4 can produce its first tracked pose while
+kds-Z790 performs cuRobo candidate preflight. The post-planning callback joins
+that exact initializer before the action loop can expose pickup. Tracking then
+continues without a restart through pickup, lift and transfer. At the stopped
+pre-insertion hold, the consumer establishes a sequence barrier and uses the
+first newer native-valid pose, so it cannot reuse an in-motion buffered frame.
+
+The cylindrical `Dinf` contract discards axial yaw and resolves the equivalent
+end exchange against the planned free insertion end. Only the resulting free
+tip and unoriented axis enter socket-frame XY and optional tilt correction.
+No tracker score, pose jump, workspace, age or task-success threshold is added
+by this bridge.
+
 `run_zerodex_capture4.sh` is the single entry point for `--check`,
 `--camera-only`, `--plan-only`, and `--run`. It sources
 [`config/zerodex_capture4.env.sh`](config/zerodex_capture4.env.sh), which

@@ -174,6 +174,29 @@ def test_live_key_capture_state_and_preflight_order(tmp_path, monkeypatch):
     assert result.preflight.status == "sampled_planning_pass"
 
 
+def test_tracker_initializer_starts_after_pose_before_candidate_preflight(
+        tmp_path, monkeypatch):
+    arguments, events, _repre = _setup(tmp_path, monkeypatch)
+    observed = []
+
+    def begin_tracker(value):
+        events.append("tracker_begin")
+        observed.append(value)
+        assert value.observation.capture_id == "key_001"
+        assert value.key_evidence_dir == tmp_path / "key_evidence"
+        assert isinstance(value.state, LiveRobotState)
+
+    result = trial.prepare_next_live_key(
+        **arguments, on_observation=begin_tracker,
+        before_preflight=lambda: events.append("planner_ready"))
+
+    assert result.preflight.status == "sampled_planning_pass"
+    assert len(observed) == 1
+    assert events.index("measured_state_at_exposure") < events.index(
+        "tracker_begin") < events.index("planner_ready") < events.index(
+        "preflight")
+
+
 def test_planner_warmup_error_is_seen_after_capture_before_preflight(
         tmp_path, monkeypatch):
     arguments, events, _repre = _setup(tmp_path, monkeypatch)

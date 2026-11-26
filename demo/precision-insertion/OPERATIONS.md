@@ -118,13 +118,21 @@ cameras and the current 5 mm straight-mount candidate policy.
    frame and freeze the collision world for the session. The default
    `board_free` profile uses the commissioned extrinsics and measured table
    plane; no ChArUco observation is required at runtime.
-3. Observe the newly placed key and select an endpoint-screened grasp.
+3. Observe the newly placed key. After SAM3+FoundPose admits its same-session
+   6D pose and exposure-time robot state, start MV-GoTrack on capture4. Its
+   remote initialization and first tracked frame overlap local cuRobo
+   candidate preflight; the pipeline joins that initializer before exposing
+   the selected endpoint-screened grasp to pickup.
 4. Plan and execute pickup, squeeze and lift; wait two seconds before the lift
    snapshot so a later slip is recorded as transfer failure rather than grasp
    failure.
 5. Transfer the held key to the planned pre-insertion wrist pose.
-6. Capture pre-insertion multiview images. Estimate the visible key end/axis
-   with calibrated, socket-pose-inlier views.
+6. Capture pre-insertion multiview images. In MV-GoTrack mode, establish a
+   sequence barrier after the stopped hold and consume the first newer native-
+   valid 6D pose. Reduce its cylindrical D-infinity symmetry to the physical
+   free tip and unoriented axis, then compute socket-frame XY and optional
+   axis correction. The image estimator remains available in its separate
+   non-tracker mode.
 7. If a metric multiview estimate exists, apply a bounded incremental wrist
    correction and recapture in the same held-key attempt. A single-view point
    is only an active-observation probe and is never compounded as metric XY.

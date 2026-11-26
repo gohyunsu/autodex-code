@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import sys
+import threading
 from types import SimpleNamespace
 
 import numpy as np
@@ -13,6 +14,9 @@ from precision_insertion.mvgotrack import (  # noqa: E402
 )
 from precision_insertion import same_trial_xy  # noqa: E402
 from precision_insertion import mvgotrack_runtime  # noqa: E402
+from precision_insertion.live_key_trial import (  # noqa: E402
+    ObservedLiveKey, PreparedLiveKeyTrial,
+)
 
 
 def _assets(root: Path):
@@ -239,3 +243,41 @@ def test_runtime_refuses_non_cylinder_initializer(tmp_path):
     prepared = SimpleNamespace(observation=SimpleNamespace(family="square"))
     with pytest.raises(ValueError, match="cylindrical key"):
         runtime.initialize(prepared)
+
+
+def test_runtime_overlaps_tracker_initialization_with_candidate_planning(
+        tmp_path, monkeypatch):
+    runtime = mvgotrack_runtime.MVGoTrackRuntime(
+        mvgotrack_runtime.MVGoTrackRuntimeConfig(
+            endpoint="tcp://127.0.0.1:5591", ssh_host="capture4",
+            ssh_port=77, remote_manager=Path("/manager"),
+            remote_session_root=Path("/sessions"), timeout_s=4.),
+        runner=SimpleNamespace(output_dir=tmp_path))
+    observation = SimpleNamespace(capture_id="key_capture_8")
+    state = SimpleNamespace()
+    observed = ObservedLiveKey(observation, state, tmp_path / "key")
+    prepared = PreparedLiveKeyTrial(
+        observation, state, SimpleNamespace(status="sampled_planning_pass"),
+        tmp_path / "key")
+    started = threading.Event()
+    allow_first_pose = threading.Event()
+    completed = threading.Event()
+
+    def initialize(value):
+        assert value is observed
+        started.set()
+        assert allow_first_pose.wait(2.)
+        runtime._initialized_capture_id = value.observation.capture_id
+        completed.set()
+
+    monkeypatch.setattr(runtime, "initialize", initialize)
+    runtime.begin_initialize(observed)
+    assert started.wait(2.)
+    assert not completed.is_set()
+    # Candidate planning may run here while capture4 waits for its first pose.
+    planning_result = "sampled_planning_pass"
+    assert planning_result == prepared.preflight.status
+    allow_first_pose.set()
+    runtime.await_initialized(prepared)
+    assert completed.is_set()
+    runtime.close()

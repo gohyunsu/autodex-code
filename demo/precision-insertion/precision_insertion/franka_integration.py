@@ -473,8 +473,10 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
             mvgotrack_runtime = MVGoTrackRuntime(
                 MVGoTrackRuntimeConfig.from_environment(),
                 runner=live.opened.runner)
+            stages["key_planning"]["on_observed"] = (
+                mvgotrack_runtime.begin_initialize)
             stages["key_planning"]["on_prepared"] = (
-                mvgotrack_runtime.initialize)
+                mvgotrack_runtime.await_initialized)
             stages["task"]["mvgotrack"] = mvgotrack_runtime
         if (family == "cylinder" and options.xy_estimator == "tracked_tip"
                 and "task" in stages):

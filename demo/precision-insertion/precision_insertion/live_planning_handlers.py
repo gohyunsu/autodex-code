@@ -14,7 +14,9 @@ from uuid import uuid4
 
 from .action_loop import ActionHandler
 from .checkpoint_camera import capture_snapshot_checkpoint_frames
-from .live_key_trial import PreparedLiveKeyTrial, prepare_next_live_key
+from .live_key_trial import (
+    ObservedLiveKey, PreparedLiveKeyTrial, prepare_next_live_key,
+)
 from .session_policy import SessionDecision
 from .prompt_contract import reject_incorrect_object_color
 from .timing_profile import timed
@@ -35,6 +37,7 @@ _OWNED_CAPTURE_PARAMETERS = frozenset({
     "capture_id", "calibrated_camera_ids", "intrinsics_full",
     "extrinsics_full", "image_hw", "key_prompt", "view_limits",
     "planner", "limits", "before_preflight",
+    "on_observation",
 })
 
 
@@ -55,6 +58,7 @@ class LiveKeyPlanningHandlers:
     key_prompt: str
     key_parameters: Mapping[str, object]
     before_preflight: Callable[[], None] | None = None
+    on_observed: Callable[[ObservedLiveKey], None] | None = None
     on_prepared: Callable[[PreparedLiveKeyTrial], None] | None = None
     capture_id_factory: Callable[[], str] = _new_capture_id
     latest: PreparedLiveKeyTrial | None = field(default=None, init=False)
@@ -64,6 +68,8 @@ class LiveKeyPlanningHandlers:
                 not callable(self.capture_id_factory) or
                 (self.before_preflight is not None and
                  not callable(self.before_preflight)) or
+                (self.on_observed is not None and
+                 not callable(self.on_observed)) or
                 (self.on_prepared is not None and
                  not callable(self.on_prepared)) or
                 not isinstance(self.key_prompt, str) or
@@ -127,12 +133,13 @@ class LiveKeyPlanningHandlers:
                 timeout_s=float(self.key_parameters["capture_timeout_s"]),
                 retain_original=False),
             before_preflight=self.before_preflight,
+            on_observation=self.on_observed,
             **dict(self.key_parameters))
         self.latest = prepared
         if self.on_prepared is not None:
-            # FoundPose is the one absolute initializer.  The callback runs
-            # after v8 preflight has accepted the same observation, but still
-            # before pickup can be selected by the action loop.
+            # Post-planning callbacks may join work launched at the accepted
+            # observation boundary. They still run before pickup can be
+            # selected by the action loop.
             self.on_prepared(prepared)
 
     def continue_same_capture(self, runner, decision: SessionDecision) -> None:
