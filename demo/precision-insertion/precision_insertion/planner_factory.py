@@ -16,7 +16,7 @@ _CUROBO_CONTENT = (
 
 def selected_fr3_planner_config_options(
     spec: EndEffectorSpec | None = None,
-) -> dict[str, str]:
+) -> dict[str, object]:
     """Bind FR3 planner YAML, spheres and meshes to this checkout.
 
     The original AutoDex planner defaults intentionally remain rooted at
@@ -36,6 +36,7 @@ def selected_fr3_planner_config_options(
         "hand_cfg_path": str(config_root / hand_name),
         "external_robot_configs_path": str(config_root),
         "external_asset_path": str(_CUROBO_CONTENT / "assets"),
+        "use_hand_planner_defaults": True,
     }
 
 

@@ -64,4 +64,5 @@ def test_offline_gripper_planner_binds_checkout_content(tmp_path, monkeypatch):
     assert Path(result["robot_cfg_path"]).is_file()
     assert Path(result["hand_cfg_path"]).is_file()
     assert Path(result["external_asset_path"]).is_dir()
+    assert result["use_hand_planner_defaults"] is True
     assert received == result

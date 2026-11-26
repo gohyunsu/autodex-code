@@ -311,16 +311,23 @@ class GraspPlanner:
                  verbose_planning: bool = False,
                  robot_urdf_path: Optional[str] = None,
                  external_robot_configs_path: Optional[str] = None,
-                 external_asset_path: Optional[str] = None):
-        if robot_cfg_path is None:
-            robot_file, hand_file, self._collision_act_dist, self._num_trajopt_seeds, self._interpolation_type = self.HAND_CONFIGS.get(hand, self.HAND_CONFIGS["allegro"])
-            robot_cfg_path = os.path.join(robot_configs_path, robot_file)
-            if hand_cfg_path is None:
-                hand_cfg_path = os.path.join(robot_configs_path, hand_file)
+                 external_asset_path: Optional[str] = None,
+                 use_hand_planner_defaults: bool = False):
+        (robot_file, hand_file, hand_collision_act_dist,
+         hand_num_trajopt_seeds, hand_interpolation_type) = self.HAND_CONFIGS.get(
+             hand, self.HAND_CONFIGS["allegro"])
+        if robot_cfg_path is None or use_hand_planner_defaults:
+            self._collision_act_dist = hand_collision_act_dist
+            self._num_trajopt_seeds = hand_num_trajopt_seeds
+            self._interpolation_type = hand_interpolation_type
         else:
             self._collision_act_dist = 0.01
             self._num_trajopt_seeds = 1024
             self._interpolation_type = InterpolateType.LINEAR_CUDA
+        if robot_cfg_path is None:
+            robot_cfg_path = os.path.join(robot_configs_path, robot_file)
+            if hand_cfg_path is None:
+                hand_cfg_path = os.path.join(robot_configs_path, hand_file)
 
         self._robot_cfg = load_yaml(robot_cfg_path)["robot_cfg"]
         self._hand_cfg = load_yaml(hand_cfg_path)["robot_cfg"]
