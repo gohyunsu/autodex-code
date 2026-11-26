@@ -52,6 +52,12 @@ graph of entities and stages with predicates drawn from:
 contract.  A human-readable archetype may be logged for analysis but cannot
 select a model head, controller, reward or code path.
 
+Every predicate must expose a signed residual `rho`, a declared physical
+tolerance `tau`, its entity scope and reference frame.  Evaluation operates on
+the normalized margin `rho/tau`, posterior violation probability and measured
+physical violation.  This common numeric contract permits comparison across
+visually and semantically different manipulation manifestations.
+
 ## 4. Independent zero-shot axes
 
 | Axis | Development | Primary test |
@@ -180,6 +186,11 @@ justified under the tested conditions.
 
 A single success threshold can hide whether precision improved.  Tolerance-
 sweep curves and violation magnitude are therefore mandatory.
+
+The headline plot should sweep one or more physical tolerances and show the
+base policy, point-state correction and proposed belief-aware layer on the
+same axes.  A method that only changes success at one conveniently chosen
+threshold has not established a general precision improvement.
 
 ## 11. Leakage audit
 

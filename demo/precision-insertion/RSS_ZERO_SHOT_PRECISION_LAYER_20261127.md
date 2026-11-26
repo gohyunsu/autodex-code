@@ -25,6 +25,27 @@ contacts and disturbance budgets can be represented geometrically.  It does
 not initially include deformable objects, granular media, liquid dynamics, or
 tasks whose success is primarily semantic rather than geometric.
 
+Precision is not defined by a named task family.  An execution is
+precision-critical whenever a small state or action perturbation can change
+the satisfaction of one or more task constraints.  For constraint `k`, use
+
+```text
+normalized margin:  q_k = rho_k / tau_k
+decision risk:      d_k = P(rho_k < 0 | b_t)
+```
+
+where `rho_k` is a signed geometric/contact margin and `tau_k` is the physical
+tolerance declared by the program.  The layer improves precision if it lowers
+constraint-violation risk and shifts the success-versus-tolerance curve while
+leaving task semantics and gross motion to the base policy.  No task name,
+archetype ID or insertion-like phase label may select a model head or control
+law.
+
+This makes a narrow opening, a collision-free withdrawal from dense clutter,
+a placement that must not disturb neighbours, and a contact-guided motion
+different physical manifestations of the same execution problem.  They are
+evidence for transfer, not the method definition.
+
 ## 2. Problem contract
 
 At deployment the layer receives:
@@ -129,6 +150,23 @@ This distinction is the intended novelty boundary:
 - **residual execution** decides how to correct the nominal action under that
   uncertainty.
 
+### 4.1 The belief must be decision-relevant
+
+The paper must not rename an opaque recurrent latent a belief.  For every
+constraint element, the representation must expose at least a distribution
+over signed margin, activation/contact mode and the identity of the entities
+involved.  Its uncertainty must be calibrated against held-out physical
+measurements and must change the residual decision.  A posterior mean alone is
+a point-estimator baseline.
+
+The useful abstraction is not necessarily a full photorealistic world state.
+It is the smallest posterior that changes whether the next nominal action will
+satisfy the declared constraints.  Vision estimates free-space geometry and
+remote relative pose; proprioception and contact history update the belief
+when interaction or occlusion makes visual pose insufficient.  A VLA may
+compile language into the constraint program, but it is not the metric
+controller.
+
 ## 5. Zero-shot residual control
 
 The residual controller consumes the base action, the posterior and `C`:
@@ -179,6 +217,17 @@ The paper is defensible only if it supports all four linked claims:
 4. **Calibrated physical evidence:** posterior coverage/contact identity
    predicts when and how to correct better than a point state, raw history, or
    implicit residual policy.
+
+The concise novelty claim is:
+
+> A permutation-equivariant, calibrated belief over task-specified constraint
+> margins provides a reusable interface between heterogeneous nominal
+> manipulation policies and multimodal physical feedback, enabling zero-shot
+> residual precision control on unseen constraint compositions.
+
+This is stronger than sensor fusion and narrower than universal manipulation.
+It fails if a task-specific head, reward, contact state machine, demonstration
+or online update is needed for each new physical manifestation.
 
 If only action residuals improve, the work overlaps residual RL.  If only the
 constraint language is new, it overlaps geometric-constraint interfaces.  If
@@ -232,6 +281,19 @@ and the tightly packed-container example if useful, but neither receives
 special model code.  ContactBench assets can provide an external reference
 suite; custom modular fixtures provide controlled metrology and tolerance
 sweeps.
+
+The primary result is not an average over named tasks.  It is a tolerance
+surface conditioned on constraint-program structure:
+
+```text
+success / violation magnitude = f(clearance, pose tolerance,
+                                  disturbance budget,
+                                  graph composition,
+                                  base policy)
+```
+
+Named physical setups are retained only so readers can reproduce the
+manifestations and inspect failure videos.
 
 The preregistered split, leakage audit, base-policy interface, metrics and
 machine-readable evidence contract are specified in
