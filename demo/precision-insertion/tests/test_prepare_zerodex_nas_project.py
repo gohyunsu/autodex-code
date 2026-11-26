@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 
+import precision_insertion.project_bundle as project_bundle
 from precision_insertion.project_bundle import verify_project
 
 
@@ -230,3 +231,32 @@ def test_refresh_code_upgrades_v1_inventory_and_archives_three_git_sources(
     assert report["reproduction_ready"] is True
     assert report["untracked_managed_files"] == {}
     assert report["declared_failures"] == []
+
+
+def test_refresh_code_reuses_unchanged_asset_and_rig_hashes(
+        tmp_path, monkeypatch):
+    """A code-only refresh must not reread unchanged large managed files."""
+    prepare = _load_prepare_module()
+    sources = tmp_path / "sources"
+    main = _git_repo(sources / "autodex-code", "main")
+    paradex = _git_repo(sources / "paradex", "camera")
+    nvdiffrast = _git_repo(sources / "nvdiffrast", "renderer")
+    monkeypatch.setattr(prepare, "REPO", main)
+    root = _bundle(tmp_path)
+    protected = {
+        (root / "assets/asset.bin").resolve(),
+        (root / "rigs/zerodex_capture4/rig.json").resolve(),
+    }
+    original = project_bundle.sha256_file
+
+    def reject_protected_rehash(path):
+        assert Path(path).resolve() not in protected
+        return original(path)
+
+    monkeypatch.setattr(project_bundle, "sha256_file", reject_protected_rehash)
+    prepare.refresh_code(
+        nas_root=root, paradex_repo=paradex,
+        nvdiffrast_repo=nvdiffrast)
+
+    report = verify_project(nas_root=root, verify_sha256=False, repo=main)
+    assert report["reproduction_ready"] is True

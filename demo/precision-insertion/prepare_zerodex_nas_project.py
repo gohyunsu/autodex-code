@@ -20,7 +20,6 @@ from precision_insertion.project_bundle import (
     inventory_tree as _inventory_tree,
     project_inventory as _project_inventory,
     refresh_inventory as _refresh_inventory,
-    rig_inventory as _rig_inventory,
     sha256_file as _sha256,
     verify_project,
 )
@@ -110,33 +109,14 @@ def refresh_code(*, nas_root: Path, paradex_repo: Path,
         _source_archive(nvdiffrast_repo.expanduser().resolve(), code),
     ]
     manifest["code"] = snapshots
-    manifest["rig_files"] = _rig_inventory(nas_root)
-    foundation = nas_root / "assets/capture4_foundationpose"
-    asset_updates = [
-        nas_root / "assets/shared_data/AutoDex/foundpose_assets"
-        / KEY / name for name in ("summary.json", "reference_intrinsics.json")]
-    socket_root = nas_root / "assets/shared_data/AutoDex/foundpose_assets"
-    socket_prefixes = tuple(
-        f"assets/shared_data/AutoDex/foundpose_assets/precision_socket_cylinder_gap_{gap:02d}mm/"
-        for gap in GAPS)
-    for gap in GAPS:
-        extracted = socket_root / f"precision_socket_cylinder_gap_{gap:02d}mm"
-        if extracted.is_dir():
-            asset_updates.extend(path for path in sorted(extracted.rglob("*"))
-                                 if path.is_file())
-    if foundation.is_dir():
-        asset_updates.extend(path for path in sorted(foundation.rglob("*"))
-                             if path.is_file())
-    updates = {str(path.relative_to(nas_root)):
-               {"path": str(path.relative_to(nas_root)),
-                "bytes": path.stat().st_size, "sha256": _sha256(path)}
-               for path in asset_updates if path.is_file()}
-    manifest["assets"] = sorted(
-        {**{row["path"]: row for row in manifest["assets"]
-             if not row["path"].startswith("assets/packages/foundpose/")
-             and not row["path"].startswith(socket_prefixes)},
-         **updates}.values(),
-        key=lambda row: row["path"])
+    # This operation refreshes source archives, not runtime assets. Reuse the
+    # declared digest whenever a managed file has the same byte size, while
+    # still discovering new files and rehashing size changes. Full SHA256
+    # verification remains the explicit follow-up audit below. This avoids
+    # rereading multi-gigabyte rig and FoundPose trees on every code refresh.
+    manifest["rig_files"] = _refresh_inventory(
+        list(manifest.get("rig_files", [])),
+        nas_root / "rigs" / "zerodex_capture4", nas_root)
     manifest["assets"] = _refresh_inventory(
         manifest["assets"], nas_root / "assets", nas_root)
     manifest["restore_files"] = _refresh_inventory(
