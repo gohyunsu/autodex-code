@@ -91,6 +91,10 @@ def test_same_pose_restoration_reuses_v8_grasp_and_fully_opens_hand(
     monkeypatch.setattr(module, "plan_repose_release_exit", release)
 
     class Planner:
+        _n_arm = 7
+        _hand = "fr3_inspire"
+        _robot_cfg = {"kinematics": {"ee_link": "base_link"}}
+
         def set_start_state(self, _state):
             pass
 

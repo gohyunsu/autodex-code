@@ -48,5 +48,11 @@ def link8_to_hand(urdf_path: Path) -> np.ndarray:
     The latter includes the 107 mm fr3_joint8 fixed segment, so applying
     link7_to_hand to O_T_EE would include that segment twice.
     """
-    return _fixed_pose(_joints(urdf_path), "flange_to_hand",
-                       "fr3_link8", "base_link")
+    joints = _joints(urdf_path)
+    if "flange_to_hand" in joints:
+        return _fixed_pose(joints, "flange_to_hand",
+                           "fr3_link8", "base_link")
+    if "fr3_hand_joint" in joints:
+        return _fixed_pose(joints, "fr3_hand_joint",
+                           "fr3_link8", "fr3_hand")
+    raise ValueError("URDF has neither Inspire nor stock-gripper hand mount")

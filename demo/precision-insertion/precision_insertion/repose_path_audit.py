@@ -15,6 +15,7 @@ import numpy as np
 from .assets import AssetPaths
 from .config import TaskMode
 from .geometry import pose_angle_deg, validate_se3
+from .end_effector import planner_end_effector_spec
 from .path_audit import (
     PathAuditLimits, _aabb_distance_lower_bound, _array_sha256, _box_corners,
     _fixed_world_models, _held_hand_models, _held_pair_report,
@@ -39,12 +40,14 @@ def audit_repose_held_paths(
     landing pose require separate checks.
     """
     limits.validate()
+    spec = planner_end_effector_spec(planner)
     height = float(release_height_m)
     if not np.isfinite(height) or height < 0:
         raise ValueError("release height must be finite and nonnegative")
     held = np.asarray(held_hand_q, dtype=np.float64)
-    if held.shape != (6,) or not np.all(np.isfinite(held)):
-        raise ValueError("held_hand_q must be six finite Inspire joints")
+    if held.shape != (spec.hand_dof,) or not np.all(np.isfinite(held)):
+        raise ValueError(
+            f"held_hand_q must contain {spec.hand_dof} finite {spec.name} joints")
     key_hand = validate_se3(T_key_hand, name="reset T_key_hand")
     initial = validate_se3(T_robot_key_initial, name="initial T_robot_key")
     rest = validate_se3(T_robot_key_rest, name="target tabletop T_robot_key")
@@ -171,7 +174,8 @@ def audit_repose_held_paths(
                                          "required_clearance_m": required})
     return {
         "schema": "precision_insertion_sampled_repose_held_path_audit_v1",
-        "scope": "sampled_full_key_and_inspire_links_vs_frozen_socket_and_table",
+        "scope": f"sampled_full_key_and_{spec.name}_links_vs_frozen_socket_and_table",
+        "end_effector": spec.name,
         "mode": {"family": mode.family, "gap_mm": mode.gap_mm},
         "sample_counts": {name: len(path) for name, path in stages.items()},
         "release_height_m": height,

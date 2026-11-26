@@ -16,9 +16,10 @@ from typing import Sequence
 import numpy as np
 
 from autodex.utils.conversion import cart2se3, se32cart
-from autodex.utils.robot_config import FR3_CLEAR_VIEW, INSPIRE_INIT
+from autodex.utils.robot_config import FR3_CLEAR_VIEW
 
 from .axis_jacobian import _fixed_world_cfg
+from .end_effector import planner_end_effector_spec
 from .geometry import pose_angle_deg, validate_se3
 from .path_audit import PathAuditLimits, _audit_held_geometry_samples
 
@@ -32,10 +33,11 @@ class HeldReverseRoute:
     sampled_geometry: dict
 
 
-def _joint_path(path: np.ndarray, name: str) -> np.ndarray:
+def _joint_path(path: np.ndarray, name: str, *, full_dof: int) -> np.ndarray:
     q = np.asarray(path, dtype=np.float64)
-    if q.ndim != 2 or q.shape[1] != 13 or len(q) < 2 or not np.isfinite(q).all():
-        raise ValueError(f"{name} needs a finite 13-joint trajectory")
+    if (q.ndim != 2 or q.shape[1] != full_dof or len(q) < 2 or
+            not np.isfinite(q).all()):
+        raise ValueError(f"{name} needs a finite {full_dof}-joint trajectory")
     return q.copy()
 
 
@@ -78,19 +80,25 @@ def assemble_reverse_held_trajectory(
             not math.isfinite(traj_dt_s) or arm_velocity_rad_s <= 0 or
             traj_dt_s <= 0):
         raise ValueError("reverse route needs follower timing")
+    spec = planner_end_effector_spec(planner)
     current = np.asarray(current_q, dtype=np.float64)
-    if current.shape != (13,) or not np.isfinite(current).all():
-        raise ValueError("reverse route needs measured FR3/Inspire joints")
+    if current.shape != (spec.full_dof,) or not np.isfinite(current).all():
+        raise ValueError(
+            f"reverse route needs measured FR3/{spec.name} joints")
     held_hand = current[7:].copy()
     xy_source = [
-        (f"xy_{i}", _joint_path(path, f"executed XY {i}"))
+        (f"xy_{i}", _joint_path(
+            path, f"executed XY {i}", full_dof=spec.full_dof))
         for i, path in enumerate(executed_xy_trajectories)
     ]
     source = list(reversed(xy_source))
     source.extend((
-        ("transfer", _joint_path(executed_transfer_trajectory,
-                                 "executed transfer")),
-        ("lift", _joint_path(executed_lift_trajectory, "executed lift")),
+        ("transfer", _joint_path(
+            executed_transfer_trajectory, "executed transfer",
+            full_dof=spec.full_dof)),
+        ("lift", _joint_path(
+            executed_lift_trajectory, "executed lift",
+            full_dof=spec.full_dof)),
     ))
     reversed_parts = []
     for name, path in source:
@@ -176,11 +184,13 @@ def plan_held_reverse_route(
     target["pose"] = se32cart(release_key @ mesh_offset).tolist()
     retract = planner.plan_js_to_init(
         scene, held_path[-1, :7],
-        start_hand_qpos=np.asarray(INSPIRE_INIT),
+        start_hand_qpos=planner_end_effector_spec(planner).open_q,
         goal_arm_qpos=np.asarray(FR3_CLEAR_VIEW))
     if retract is None:
         raise ValueError("reverse release has no open-hand clear-view path")
-    retract = _joint_path(retract, "open-hand clear-view retract")
+    retract = _joint_path(
+        retract, "open-hand clear-view retract",
+        full_dof=planner_end_effector_spec(planner).full_dof)
     audit = {
         "held_sample_count": len(held_path),
         "segments": {name: len(path) for name, path in parts},

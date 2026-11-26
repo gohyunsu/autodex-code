@@ -68,6 +68,27 @@ def _geometry():
     return calibration, joints, robot_urdf
 
 
+def _gripper_geometry():
+    robot_urdf = (Path(__file__).resolve().parents[3] / "autodex" /
+                  "planner/src/curobo/content/assets/robot" /
+                  "fr3_gripper_description/fr3_gripper.urdf")
+    joints = np.r_[np.zeros(7), [.02, .02]]
+    point = _hand_transform(joints, robot_urdf) @ HAND_FOCUS
+    T_camera_robot = np.eye(4)
+    T_camera_robot[:3, 3] = [-point[0], -point[1], 1. - point[2]]
+    K = [[100., 0., 50.], [0., 100., 50.], [0., 0., 1.]]
+    calibration = {
+        "c2r": np.eye(4).tolist(),
+        "camera_calibration": {
+            "intrinsics_full": {camera: {"K_undist": K}
+                                for camera in CAMERAS},
+            "extrinsics_full": {camera: T_camera_robot.tolist()
+                                for camera in CAMERAS},
+        },
+    }
+    return calibration, joints, robot_urdf
+
+
 @pytest.mark.parametrize("lying", [False, True])
 @pytest.mark.parametrize("answer,expected", [("YES", "held"), ("NO", "miss")])
 def test_grip_label_is_independent_of_initial_key_angle(tmp_path, lying, answer,
@@ -120,6 +141,19 @@ def test_hand_crop_uses_measured_projection():
         calibration=calibration, T_robot_hand=_hand_transform(joints, urdf))
     assert pixel == pytest.approx([50., 50.])
     assert roi == (0, 0, 650, 650)
+
+
+def test_franka_gripper_uses_nine_dof_urdf_without_changing_consensus(tmp_path):
+    calibration, joints, urdf = _gripper_geometry()
+    visual = observe_visible_grip(
+        Answers({camera: "YES" for camera in CAMERAS}),
+        _scene(tmp_path, lying=True), tmp_path,
+        calibration=calibration, joint_q=joints, robot_urdf=urdf)
+    assert visual.parsed["class"] == "held"
+    assert all("franka_gripper" in row["crop"]["method"]
+               for row in visual.aggregation["per_view"])
+    verify_visible_grip(visual.to_record(), set(CAMERAS), tmp_path,
+                        calibration=calibration, joint_q=joints)
 
 
 def test_capture4_straight_mount_batches_three_hand_crops(tmp_path):

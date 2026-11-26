@@ -522,7 +522,7 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
                            observed_tip_socket_m=None,
                            observed_axis_socket=None,
                            action_tag: str = "") -> Path:
-    """Move the rigidly held key while leaving all Inspire joints fixed."""
+    """Move the rigidly held key while leaving all hand joints fixed."""
     increment = np.asarray(increment_socket_m, dtype=float)
     if increment.shape != (2,) or not np.all(np.isfinite(increment)):
         raise ValueError("held XY increment must contain two finite metres")
@@ -542,7 +542,7 @@ def plan_and_execute_shift(*, runner, planner, adapter, read_state,
         raise ValueError("observed key axis needs three finite components")
     start = read_state()
     if not isinstance(start, LiveRobotState):
-        raise TypeError("same-trial shift needs measured FR3/Inspire state")
+        raise TypeError("same-trial shift needs measured FR3/end-effector state")
     socket = validated_frozen_socket_pose(
         mode=runner.mode, shared_root=runner.shared_root,
         calibration=runner.calibration)
@@ -916,6 +916,7 @@ def plan_corrected_axial_handoff(*, runner, planner,
             "attempts": depth_attempts,
         },
         "measured_start": state.to_record(),
+        "end_effector": getattr(state, "end_effector", "inspire"),
         "decision_timestamp_s": time.time(),
         **alignment_record,
         "held_relation_scope": (
@@ -989,7 +990,9 @@ def verify_same_trial_axial_handoff(path: Path) -> dict:
                 fallback.get("used") is not expected_fallback):
             raise ValueError(
                 "same-trial axial handoff has inconsistent target depth")
-    if (axial.shape != (record["axial_sample_count"], 13) or
+    hand_dof = len(record["measured_start"]["full_q"]) - 7
+    if (hand_dof not in {2, 6} or
+            axial.shape != (record["axial_sample_count"], 7 + hand_dof) or
             not np.array_equal(axial[0], record["axial_start_q"]) or
             not np.array_equal(axial[-1], record["axial_end_q"]) or
             not np.allclose(axial[0], record["measured_start"]["full_q"],

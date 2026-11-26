@@ -1,4 +1,4 @@
-"""Keep the FR3 and open Inspire out of AutoDex's perception views.
+"""Keep the FR3 and selected open end effector out of perception views.
 
 AutoDex's ``src.execution.franka_executor.FrankaExecutor`` owns the initial
 free-space ``home(clear_view=True)``; ``autodex.executor.real.RealExecutor``
@@ -16,8 +16,9 @@ from typing import Callable
 
 import numpy as np
 
-from autodex.utils.robot_config import FR3_CLEAR_VIEW, INSPIRE_INIT
+from autodex.utils.robot_config import FR3_CLEAR_VIEW
 
+from .end_effector import end_effector_spec
 from .live_robot_state import LiveRobotState
 from .repose_preflight import ReposeHeldPreflight
 from .repose_release import ReposeReleasePreflight
@@ -47,10 +48,11 @@ class ClearViewForPerception:
                 getattr(self.executor, "home", None)):
             raise TypeError("clear view needs Franka home and measured feedback")
         if (getattr(self.executor, "arm_dof", None) != 7 or
-                getattr(self.executor, "hand_name", None) not in
-                {"inspire", "inspire_left"}):
+                end_effector_spec(getattr(
+                    self.executor, "hand_name", None)).name not in
+                {"inspire", "franka_gripper"}):
             raise TypeError(
-                "precision insertion needs the 7-DOF FrankaExecutor with Inspire; "
+                "precision insertion needs the 7-DOF FrankaExecutor; "
                 "AutoDex RealExecutor controls xArm")
         for value in (
                 self.max_arm_hand_skew_s, self.max_hand_command_error_raw,
@@ -59,15 +61,20 @@ class ClearViewForPerception:
             if not math.isfinite(float(value)) or float(value) <= 0:
                 raise ValueError("clear-view feedback limits must be positive")
 
+    @property
+    def _open_hand_q(self) -> np.ndarray:
+        return end_effector_spec(getattr(
+            self.executor, "hand_name", "inspire")).open_q
+
     def verify_state(self, state: LiveRobotState, *, phase: str,
                      require_fresh: bool = True) -> LiveRobotState:
         self._validate_feedback(state, phase=phase, require_fresh=require_fresh)
         arm_error = float(np.max(np.abs(state.full_q[:7] - FR3_CLEAR_VIEW)))
-        hand_error = float(np.max(np.abs(state.full_q[7:] - INSPIRE_INIT)))
+        hand_error = float(np.max(np.abs(state.full_q[7:] - self._open_hand_q)))
         if (arm_error > self.max_arm_error_rad or
                 hand_error > self.max_hand_error_rad):
             raise ValueError(
-                f"{phase}: arm is not at clear view or Inspire is not open "
+                f"{phase}: arm is not at clear view or end effector is not open "
                 f"(arm={arm_error:.4f}, hand={hand_error:.4f} rad)")
         return state
 
@@ -90,9 +97,10 @@ class ClearViewForPerception:
         self._validate_feedback(state, phase=phase)
         if np.max(np.abs(state.full_q[:7] - expected[:7])) > self.max_arm_error_rad:
             raise ValueError(f"{phase}: arm missed the release-exit waypoint")
-        if (require_open and np.max(np.abs(state.full_q[7:] - INSPIRE_INIT)) >
+        if (require_open and np.max(np.abs(
+                state.full_q[7:] - self._open_hand_q)) >
                 self.max_hand_error_rad):
-            raise ValueError(f"{phase}: Inspire is not fully open")
+            raise ValueError(f"{phase}: end effector is not fully open")
         return state
 
     def wait_for_open_hand(self, expected: np.ndarray, *, phase: str,
@@ -104,10 +112,11 @@ class ClearViewForPerception:
             self._validate_feedback(state, phase=phase)
             if np.max(np.abs(state.full_q[:7] - expected[:7])) > self.max_arm_error_rad:
                 raise ValueError(f"{phase}: arm missed the release-exit waypoint")
-            if np.max(np.abs(state.full_q[7:] - INSPIRE_INIT)) <= self.max_hand_error_rad:
+            if np.max(np.abs(
+                    state.full_q[7:] - self._open_hand_q)) <= self.max_hand_error_rad:
                 return state
             if time.monotonic() >= deadline:
-                raise ValueError(f"{phase}: Inspire did not open")
+                raise ValueError(f"{phase}: end effector did not open")
             time.sleep(0.05)
 
     def prepare_initial(self) -> LiveRobotState:
@@ -138,7 +147,7 @@ class ClearViewForPerception:
         self._validate_feedback(state, phase="failed_grasp_recovery")
         if (np.max(np.abs(state.full_q[:7] - FR3_CLEAR_VIEW)) <=
                 self.max_arm_error_rad and
-                np.max(np.abs(state.full_q[7:] - INSPIRE_INIT)) <=
+                np.max(np.abs(state.full_q[7:] - self._open_hand_q)) <=
                 self.max_hand_error_rad):
             return state
         if (not getattr(pickup_plan, "success", False) or planner is None or
@@ -181,27 +190,29 @@ class ClearViewForPerception:
         if (not callable(open_hand) or
                 not callable(follow_joint_trajectory)):
             raise TypeError("release/exit needs commissioned motion callbacks")
-        if (not np.allclose(release_plan.release_hand_q, INSPIRE_INIT,
+        if (not np.allclose(release_plan.release_hand_q, self._open_hand_q,
                             atol=1e-8, rtol=0) or
                 not np.allclose(release_plan.retreat_goal_arm_q, FR3_CLEAR_VIEW,
                                 atol=1e-8, rtol=0)):
             raise ValueError("release plan must fully open and end at clear view")
         up = np.asarray(release_plan.post_release_lift_trajectory, dtype=float)
         retract = np.asarray(release_plan.retract_trajectory, dtype=float)
-        if (up.ndim != 2 or retract.ndim != 2 or up.shape[1] != 13 or
-                retract.shape[1] != 13 or len(up) < 2 or len(retract) < 2 or
+        full_dof = 7 + len(self._open_hand_q)
+        if (up.ndim != 2 or retract.ndim != 2 or
+                up.shape[1] != full_dof or retract.shape[1] != full_dof or
+                len(up) < 2 or len(retract) < 2 or
                 not np.all(np.isfinite(up)) or
                 not np.all(np.isfinite(retract)) or
                 not np.allclose(up[-1], retract[0], atol=1e-4, rtol=0) or
                 not np.allclose(retract[-1, :7], FR3_CLEAR_VIEW,
                                 atol=1e-3, rtol=0) or
-                not np.allclose(up[:, 7:], INSPIRE_INIT, atol=1e-8, rtol=0) or
-                not np.allclose(retract[:, 7:], INSPIRE_INIT,
+                not np.allclose(up[:, 7:], self._open_hand_q, atol=1e-8, rtol=0) or
+                not np.allclose(retract[:, 7:], self._open_hand_q,
                                 atol=1e-8, rtol=0)):
             raise ValueError("release exit is not a continuous open-hand clear-view path")
         self._verify_release_waypoint(up[0], phase="before_release_open",
                                       require_open=False)
-        open_hand(np.asarray(INSPIRE_INIT, dtype=float).copy())
+        open_hand(self._open_hand_q.copy())
         opened = self.wait_for_open_hand(up[0], phase="after_release_open")
         if evidence_sink is not None:
             evidence_sink.append({"name": "release_open",
@@ -226,9 +237,10 @@ class ClearViewForPerception:
         """Execute the checked exit through the existing FrankaExecutor.
 
         The stock public trajectory method accepts arm joints plus a separate
-        Inspire controller-unit trajectory. Reuse its own conversion and
-        release ramp so the full 13-DOF plan is actually followed; passing
-        only the 13-column array would silently leave the hand untouched.
+        end-effector trajectory. Reuse its own conversion and release command
+        so the selected full-DOF plan is actually followed. The Franka
+        gripper remains force-closed during held paths and is opened only at
+        the explicit release boundary.
         """
         if (not callable(getattr(self.executor, "release", None)) or
                 not callable(getattr(self.executor, "follow_joint_trajectory", None)) or
@@ -250,7 +262,7 @@ class ClearViewForPerception:
         # Allow the final empty-hand clear-view return its measured endpoint
         # tolerance; all other paths use the stock 0.04 rad L2 follower limit.
         clear_return = (np.max(np.abs(path[-1, :7] - FR3_CLEAR_VIEW)) <= 1e-3
-                        and np.allclose(path[:, 7:], INSPIRE_INIT,
+                        and np.allclose(path[:, 7:], self._open_hand_q,
                                         atol=1e-8, rtol=0))
         previous = getattr(self.executor, "completion_max_path_error_rad", None)
         if clear_return and previous is not None:
@@ -272,7 +284,8 @@ class ClearViewForPerception:
         wrist reaches the support target within stock place's 5 mm allowance.
         """
         descent = np.asarray(path, dtype=float)
-        if (descent.ndim != 2 or descent.shape[1] != 13 or
+        if (descent.ndim != 2 or
+                descent.shape[1] != 7 + len(self._open_hand_q) or
                 len(descent) < 2 or not np.all(np.isfinite(descent)) or
                 not callable(getattr(planner, "fk_wrist", None)) or
                 not callable(getattr(self.executor, "_follow", None)) or
@@ -317,8 +330,10 @@ class ClearViewForPerception:
             raise ValueError("failed insertion return needs passed held paths and AutoDex executor")
         transfer = np.asarray(held_plan.transfer_trajectory, dtype=float)
         descent = np.asarray(held_plan.descent_trajectory, dtype=float)
+        full_dof = 7 + len(held_plan.held_hand_q)
         if (transfer.ndim != 2 or descent.ndim != 2 or
-                transfer.shape[1] != 13 or descent.shape[1] != 13 or
+                transfer.shape[1] != full_dof or
+                descent.shape[1] != full_dof or
                 len(transfer) < 2 or len(descent) < 2 or
                 not np.all(np.isfinite(transfer)) or
                 not np.all(np.isfinite(descent)) or

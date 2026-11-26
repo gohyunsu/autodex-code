@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .assets import AssetPaths
 from .config import TaskMode
+from .end_effector import end_effector_spec
 
 
 def new_offline_fr3_planner(
@@ -16,7 +17,7 @@ def new_offline_fr3_planner(
     from autodex.planner import GraspPlanner
 
     options = {
-        "hand": "fr3_inspire",
+        "hand": end_effector_spec().planner_hand,
         "robot_urdf_path": str(AssetPaths(
             Path(shared_root).expanduser().resolve(), mode).robot_urdf),
     }

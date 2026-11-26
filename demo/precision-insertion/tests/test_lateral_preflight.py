@@ -95,9 +95,9 @@ def test_lateral_plan_rejects_wrong_start_and_uncommissioned_bounds(
     bad[0, 3] += 0.01
     with pytest.raises(ValueError, match="not at the saved withdrawn hold"):
         plan_lateral_hold_shift(**{**args, "expected_hold_pose": bad})
-    with pytest.raises(ValueError, match="<= 1 mm"):
+    with pytest.raises(ValueError, match="<= 10 mm"):
         plan_lateral_hold_shift(**{
-            **args, "increment_socket_xy_m": (0.0011, 0.0)})
+            **args, "increment_socket_xy_m": (0.0101, 0.0)})
     with pytest.raises(ValueError, match="future-trial surface bound"):
         plan_lateral_hold_shift(**{
             **args, "bounds": SurfaceDeviationBounds(

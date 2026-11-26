@@ -21,6 +21,7 @@ import numpy as np
 from .guarded_axial_handoff import verify_guarded_axial_handoff
 from .observed_retry_axial_handoff import verify_observed_retry_axial_handoff
 from .guarded_contact import GuardedContactLimits
+from .end_effector import end_effector_spec
 from .insertion_checkpoint import _metric_record
 from .lift_execution import (
     LiftExecutionLimits as GuardedInsertionExecutionLimits,
@@ -153,7 +154,9 @@ def execute_bound_guarded_insertion(
         raise ValueError("guarded axial archive changed after handoff verification")
     with np.load(archive_path, allow_pickle=False) as archive:
         axial = np.asarray(archive["axial"], dtype=np.float64)
-    if (axial.shape != (handoff["axial_sample_count"], 13) or
+    spec = end_effector_spec(pre_state.end_effector)
+    if (handoff.get("end_effector", spec.name) != spec.name or
+            axial.shape != (handoff["axial_sample_count"], spec.full_dof) or
             not np.all(np.isfinite(axial)) or
             not np.array_equal(axial[0], handoff["axial_start_q"]) or
             not np.array_equal(axial[-1], handoff["axial_end_q"])):

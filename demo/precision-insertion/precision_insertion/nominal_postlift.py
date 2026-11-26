@@ -19,10 +19,13 @@ from typing import Callable
 
 import numpy as np
 
+from autodex.utils.conversion import cart2se3
+
 from .assets import AssetPaths
 from .candidates import select_pose_candidates, validate_catalog_session
 from .config import TaskMode
 from .endpoint import screen_grasp_endpoint
+from .end_effector import end_effector_spec
 from .geometry import validate_se3
 from .lift_checkpoint import LiftCheckpoint, verify_lift_checkpoint
 from .live_robot_state import LiveRobotState
@@ -49,6 +52,9 @@ class NominalHeldRelation:
     wrist_source_path: Path
     wrist_source_sha256: str
     wrist_correction_socket_m: tuple[float, float]
+    source: str = "selected_v8_wrist_hypothesis_not_observed_key_pose"
+    pickup_T_robot_key: np.ndarray | None = None
+    pickup_T_robot_hand: np.ndarray | None = None
 
     def to_record(self) -> dict:
         return {
@@ -58,7 +64,11 @@ class NominalHeldRelation:
             "wrist_source_path": str(self.wrist_source_path),
             "wrist_source_sha256": self.wrist_source_sha256,
             "wrist_correction_socket_m": list(self.wrist_correction_socket_m),
-            "source": "selected_v8_wrist_hypothesis_not_observed_key_pose",
+            "source": self.source,
+            "pickup_T_robot_key": (None if self.pickup_T_robot_key is None else
+                                   self.pickup_T_robot_key.tolist()),
+            "pickup_T_robot_hand": (None if self.pickup_T_robot_hand is None else
+                                    self.pickup_T_robot_hand.tolist()),
             "scope": "experimental_repeatable_grasp_bias_not_physical_calibration",
         }
 
@@ -188,14 +198,31 @@ def plan_nominal_postlift_transfer(
     if candidate_dir != canonical_dir:
         raise ValueError("selected nominal grasp differs from canonical v8 pool")
     wrist_file = (candidate_dir / "wrist_se3.npy").resolve()
-    relation = validate_se3(np.load(wrist_file, allow_pickle=False),
-                            name="selected nominal v8 T_key_hand")
+    spec = end_effector_spec(joint_sample.end_effector)
+    pickup_key = None
+    pickup_hand = None
+    if spec.name == "franka_gripper":
+        pickup_key = validate_se3(cart2se3(np.asarray(
+            trial.trial_scene["mesh"]["target"]["pose"], dtype=np.float64)),
+            name="initial analytic pickup T_robot_key")
+        pickup_hand = validate_se3(
+            trial.pickup_plan.wrist_se3,
+            name="initial analytic pickup T_robot_hand")
+        relation = validate_se3(
+            np.linalg.inv(pickup_key) @ pickup_hand,
+            name="initial analytic T_key_hand")
+        relation_source = "initial_analytic_pickup_pose_and_planned_wrist"
+    else:
+        relation = validate_se3(np.load(wrist_file, allow_pickle=False),
+                                name="selected nominal v8 T_key_hand")
+        relation_source = "selected_v8_wrist_hypothesis_not_observed_key_pose"
     command = compensated_key_hand_relation(
         mode=mode, shared_root=root, T_key_hand=relation,
         wrist_correction_socket_m=attempt.wrist_correction_socket_m)
     nominal = NominalHeldRelation(
         relation, command, wrist_file, _sha(wrist_file),
-        tuple(attempt.wrist_correction_socket_m))
+        tuple(attempt.wrist_correction_socket_m), relation_source,
+        pickup_key, pickup_hand)
     if (not isinstance(joint_sample, LiveRobotState) or
             joint_sample.source != "robot_joint_feedback"):
         raise ValueError("nominal transfer needs measured post-lift joints")
@@ -205,7 +232,8 @@ def plan_nominal_postlift_transfer(
         max_arm_velocity_rad_s=max_arm_velocity_rad_s)
     if joint_sample.sample_timestamp_s <= raw_lift.decision_timestamp_s:
         raise ValueError("post-lift measured hold predates the lift observation")
-    if not any(attempt.wrist_correction_socket_m):
+    if (spec.name == "inspire" and
+            not any(attempt.wrist_correction_socket_m)):
         endpoint = matches[0]["endpoint_report"]
     else:
         endpoint = screen(
@@ -300,13 +328,29 @@ def verify_nominal_postlift_preflight(
     if (not isinstance(relation_record, dict) or
             relation_record.get("schema") !=
             "precision_insertion_nominal_held_relation_v1" or
-            relation_record.get("source") !=
-            "selected_v8_wrist_hypothesis_not_observed_key_pose" or
+            relation_record.get("source") not in {
+                "selected_v8_wrist_hypothesis_not_observed_key_pose",
+                "initial_analytic_pickup_pose_and_planned_wrist"} or
             relation_record.get("wrist_source_path") != str(source) or
             relation_record.get("wrist_source_sha256") != _sha(source)):
         raise ValueError("nominal grasp source changed")
-    nominal = validate_se3(np.load(source, allow_pickle=False),
-                           name="saved v8 grasp relation")
+    if (relation_record["source"] ==
+            "initial_analytic_pickup_pose_and_planned_wrist"):
+        pickup_key = validate_se3(
+            relation_record.get("pickup_T_robot_key"),
+            name="saved analytic pickup T_robot_key")
+        pickup_hand = validate_se3(
+            relation_record.get("pickup_T_robot_hand"),
+            name="saved analytic pickup T_robot_hand")
+        nominal = validate_se3(
+            np.linalg.inv(pickup_key) @ pickup_hand,
+            name="saved analytic pickup T_key_hand")
+    else:
+        if (relation_record.get("pickup_T_robot_key") is not None or
+                relation_record.get("pickup_T_robot_hand") is not None):
+            raise ValueError("v8 nominal relation unexpectedly stores analytic poses")
+        nominal = validate_se3(np.load(source, allow_pickle=False),
+                               name="saved v8 grasp relation")
     if not np.allclose(validate_se3(relation_record.get("T_key_hand")),
                        nominal, atol=1e-8, rtol=0):
         raise ValueError("nominal key-hand relation differs from v8 candidate")
@@ -344,6 +388,8 @@ def verify_nominal_postlift_preflight(
             raise ValueError("nominal planned trajectory bytes changed")
         with np.load(archive, allow_pickle=False) as arrays:
             planning = record["planning"]
+            hand_dof = len(planning["held_hand_q"])
+            full_dof = 7 + hand_dof
             for stage in ("transfer", "axial"):
                 count = planning["sample_counts"][stage]
                 if stage not in arrays:
@@ -351,7 +397,7 @@ def verify_nominal_postlift_preflight(
                         raise ValueError("nominal planned trajectory is missing")
                     continue
                 values = arrays[stage]
-                if (values.ndim != 2 or values.shape != (count, 13) or
+                if (values.ndim != 2 or values.shape != (count, full_dof) or
                         not np.all(np.isfinite(values)) or
                         not np.allclose(values[:, 7:],
                                         planning["held_hand_q"],

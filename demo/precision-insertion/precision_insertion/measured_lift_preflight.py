@@ -17,9 +17,13 @@ from pathlib import Path
 
 import numpy as np
 
+from autodex.utils.conversion import cart2se3
+
 from .candidates import select_pose_candidates
 from .curobo_compat import install_curobo_planner_compat
 from .geometry import validate_se3
+from .end_effector import end_effector_spec
+from .endpoint import screen_grasp_endpoint
 from .live_robot_state import LiveRobotState
 from .path_audit import PathAuditLimits
 from .planner_mode import cartesian_mode_from_planner
@@ -99,7 +103,7 @@ def plan_measured_lift_chain(
 ) -> MeasuredLiftChain:
     """Replan from the measured squeeze without treating it as grasp success.
 
-    Only a measured 13-DOF state after this attempt's completed squeeze is
+    Only a measured FR3/end-effector state after this attempt's completed squeeze is
     accepted. The complete path is audited using the same frozen socket and
     exact CAD inputs as the initial v8 trial. If a commissioned future-trial
     surface bound is unavailable, cylinder mode may explicitly retain only
@@ -169,6 +173,7 @@ def plan_measured_lift_chain(
         raise ValueError("pickup used a different saved v8 trajectory")
     if not isinstance(joint_sample, LiveRobotState):
         raise TypeError("measured lift requires live robot feedback")
+    spec = end_effector_spec(joint_sample.end_effector)
     joint_sample.validate(
         max_arm_hand_skew_s=max_arm_hand_skew_s,
         max_hand_command_error_raw=max_hand_command_error_raw,
@@ -178,7 +183,7 @@ def plan_measured_lift_chain(
     squeeze_raw = np.asarray(log.get("squeeze_action_raw"), dtype=float)
     if (not isinstance(saved_post, dict) or
             saved_post.get("source") != "robot_joint_feedback" or
-            squeeze_raw.shape != (6,) or
+            squeeze_raw.shape != (spec.hand_dof,) or
             not np.all(np.isfinite(squeeze_raw)) or
             saved_post.get("sample_timestamp_s") != completed or
             not math.isfinite(completed) or
@@ -196,16 +201,42 @@ def plan_measured_lift_chain(
     if selection["status"] != "candidates_available" or len(matches) != 1:
         raise ValueError("selected v8 candidate is stale or no longer eligible")
     candidate_dir = Path(matches[0]["candidate_dir"]).expanduser().resolve()
-    relation = validate_se3(np.load(
-        candidate_dir / "wrist_se3.npy", allow_pickle=False),
-        name="nominal BODex T_key_hand")
+    if spec.name == "franka_gripper":
+        pickup_key = validate_se3(cart2se3(np.asarray(
+            trial.trial_scene["mesh"]["target"]["pose"], dtype=np.float64)),
+            name="initial analytic pickup T_robot_key")
+        pickup_hand = validate_se3(
+            trial.pickup_plan.wrist_se3,
+            name="initial analytic pickup T_robot_hand")
+        relation = validate_se3(
+            np.linalg.inv(pickup_key) @ pickup_hand,
+            name="initial analytic T_key_hand")
+        relation_source = (
+            "initial_analytic_gripper_relation_without_future_surface_bound")
+        endpoint = screen_grasp_endpoint(
+            shared_root=runner.shared_root, mode=runner.mode,
+            candidate_dir=candidate_dir,
+            minimum_hand_clearance_m=runner.catalog[
+                "minimum_hand_clearance_m"],
+            T_key_hand_override=relation,
+            hand_poses_override={"measured_post_squeeze":
+                                 joint_sample.full_q[7:]},
+            override_source="initial_analytic_gripper_plus_measured_jaws")
+    else:
+        relation = validate_se3(np.load(
+            candidate_dir / "wrist_se3.npy", allow_pickle=False),
+            name="nominal BODex T_key_hand")
+        relation_source = (
+            "nominal_BODex_relation_with_commissioned_surface_error_bound"
+            if bounds is not None else
+            "nominal_BODex_relation_without_future_surface_bound")
+        endpoint = matches[0]["endpoint_report"]
     # The candidate already passed the requested offline 20 mm hand/socket
     # screen. A post-squeeze finger reading does not locate the key in the
     # hand; applying the nominal key/hand transform to that reading as a new
     # endpoint gate can reject a valid physical trial before lift observation.
     # Keep measured joints for the lift planner, and let the lift image decide
     # whether the key was actually picked up.
-    endpoint = matches[0]["endpoint_report"]
     if (endpoint.get("endpoint_pass") is not True or
             not np.allclose(validate_se3(
                 endpoint.get("T_key_hand"), name="catalog key/hand relation"),
@@ -220,9 +251,7 @@ def plan_measured_lift_chain(
             status, attempt.attempt_id, attempt.candidate_id,
             log_file, _sha(log_file), runner.session_sha256,
             verified["report_sha256"], joint_sample, relation,
-            ("nominal_BODex_relation_with_commissioned_surface_error_bound"
-             if bounds is not None else
-             "nominal_BODex_relation_without_future_surface_bound"),
+            relation_source,
             endpoint, targets, planning, margin, planner_mode)
 
     # This can run in a new process after pickup, not just in the process

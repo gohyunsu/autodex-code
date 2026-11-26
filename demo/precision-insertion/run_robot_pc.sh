@@ -62,13 +62,24 @@ cd "$ROOT"
 export PYTHONPATH="${PRECISION_CUROBO_PYTHONPATH:+$PRECISION_CUROBO_PYTHONPATH:}${PRECISION_PARADEX_ROOT:+$PRECISION_PARADEX_ROOT:}${PRECISION_EXTRA_PYTHONPATH:+$PRECISION_EXTRA_PYTHONPATH:}$ROOT:$ROOT/demo/precision-insertion:$ROOT/src"
 export PRECISION_TIMING_LOCAL_ROOT=${PRECISION_TIMING_LOCAL_ROOT:-/tmp/precision-insertion-timing}
 export PRECISION_FR3_INSPIRE_URDF=${PRECISION_FR3_INSPIRE_URDF:-$ROOT/autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire_oct12_mount.urdf}
+export PRECISION_FR3_GRIPPER_URDF=${PRECISION_FR3_GRIPPER_URDF:-$ROOT/autodex/planner/src/curobo/content/assets/robot/fr3_gripper_description/fr3_gripper.urdf}
+END_EFFECTOR=${PRECISION_END_EFFECTOR:-inspire}
+case "$END_EFFECTOR" in
+  inspire|franka_gripper) ;;
+  *) echo "PRECISION_END_EFFECTOR must be inspire or franka_gripper" >&2; exit 2 ;;
+esac
 export PRECISION_VLM_CAMERA_IDS=${PRECISION_VLM_CAMERA_IDS:-24122734,25305463,25322638,25322649,25305461}
 PRECISION_XY_ESTIMATOR=${PRECISION_XY_ESTIMATOR:-vlm}
 XY_UPDATE_WEIGHT=${PRECISION_XY_UPDATE_WEIGHT:-1.0}
 LABEL_MODE=${PRECISION_LABEL_MODE:-vlm_only}
 
 LAUNCH_TEMPLATE=${PRECISION_LAUNCH_TEMPLATE:-$STAGE/launch.json}
-CATALOG=${PRECISION_ENDPOINT_CATALOG:-$STAGE/recipient_gap${GAP_MM}_endpoint_catalog.json}
+if [[ "$END_EFFECTOR" == franka_gripper ]]; then
+  DEFAULT_CATALOG="$STAGE/recipient_gap${GAP_MM}_endpoint_catalog_franka_gripper.json"
+else
+  DEFAULT_CATALOG="$STAGE/recipient_gap${GAP_MM}_endpoint_catalog.json"
+fi
+CATALOG=${PRECISION_ENDPOINT_CATALOG:-$DEFAULT_CATALOG}
 ROBOT=${PRECISION_ROBOT_CONFIG:-$STAGE/franka_runtime.json}
 RUN_OUTPUT_ROOT=${PRECISION_RUN_OUTPUT_ROOT:-}
 precision_require_allowed_nas_path PRECISION_LAUNCH_TEMPLATE "$LAUNCH_TEMPLATE"
@@ -136,7 +147,7 @@ RUN_TAG=${PRECISION_RUN_TAG:-"$(date +%Y%m%d_%H%M%S_%N)_$$"}
 PIPELINE_OUTPUT_DIR=
 if [[ -n "$RUN_OUTPUT_ROOT" ]]; then
   LAUNCH_DIR="$RUN_OUTPUT_ROOT/_control/$RUN_TAG"
-  PIPELINE_OUTPUT_DIR="$RUN_OUTPUT_ROOT/precision-insertion/inspire/precision_key_cylinder_r15_h80/_pipeline_runs/$RUN_TAG"
+  PIPELINE_OUTPUT_DIR="$RUN_OUTPUT_ROOT/precision-insertion/$END_EFFECTOR/precision_key_cylinder_r15_h80/_pipeline_runs/$RUN_TAG"
   mkdir -p "$(dirname -- "$PIPELINE_OUTPUT_DIR")"
 else
   # Legacy AutoDex invocation retains its original stage-local launch path.
@@ -204,6 +215,7 @@ else:
 PY
 
 echo "[pipeline] using existing camera, perception and Franka services"
+echo "[pipeline] end effector: $END_EFFECTOR"
 echo "[pipeline] VLM camera IDs: $PRECISION_VLM_CAMERA_IDS"
 echo "[pipeline] failed-trial XY estimator: $PRECISION_XY_ESTIMATOR"
 echo "[pipeline] same-trial alignment source: ${PRECISION_SAME_TRIAL_ALIGNMENT_SOURCE:-endpoint}"

@@ -98,8 +98,9 @@ def _plan_jacobian_linear_stroke(
     target = np.asarray(target_wrist_pose, dtype=np.float64)
     direction = np.asarray(direction_robot, dtype=np.float64)
     n_arm = int(planner._n_arm)
-    if n_arm != 7 or start.shape != (13,) or not np.isfinite(start).all():
-        raise ValueError("axis stroke needs finite FR3/Inspire joint state")
+    if (n_arm != 7 or start.ndim != 1 or start.size <= n_arm or
+            not np.isfinite(start).all()):
+        raise ValueError("axis stroke needs a finite FR3 end-effector joint state")
     if (reference.shape != (4, 4) or target.shape != (4, 4) or
             not np.isfinite(reference).all() or not np.isfinite(target).all() or
             direction.shape != (3,) or not np.isfinite(direction).all() or
@@ -160,7 +161,7 @@ def _plan_jacobian_linear_stroke(
     valid, status = _check_state(planner, start.astype(np.float32))
     if not valid:
         return failure(code("start_robot_collision"), status)
-    lower, upper = _joint_bounds(planner, 13)
+    lower, upper = _joint_bounds(planner, start.size)
     if np.any(start < lower - 1e-6) or np.any(start > upper + 1e-6):
         return failure(code("start_joint_limit"))
     hand = start[n_arm:].copy()
@@ -426,13 +427,14 @@ def _plan_jacobian_pose_waypoints(
     start = np.asarray(start_full_qpos, dtype=np.float64)
     reference = np.asarray(start_wrist_pose, dtype=np.float64)
     n_arm = int(planner._n_arm)
-    if (n_arm != 7 or start.shape != (13,) or not np.isfinite(start).all() or
+    if (n_arm != 7 or start.ndim != 1 or start.size <= n_arm or
+            not np.isfinite(start).all() or
             reference.shape != (4, 4) or not np.isfinite(reference).all() or
             not goals or any(np.asarray(goal).shape != (4, 4) or
                              not np.isfinite(goal).all() for goal in goals) or
             not math.isfinite(joint_increment_smoothness) or
             joint_increment_smoothness < 0):
-        raise ValueError("pose continuation needs finite FR3/Inspire states")
+        raise ValueError("pose continuation needs finite FR3 end-effector states")
     if (not isinstance(scene_cfg, dict) or
             not isinstance(scene_cfg.get("mesh"), dict) or
             "fixture_socket" not in scene_cfg["mesh"]):
@@ -456,7 +458,7 @@ def _plan_jacobian_pose_waypoints(
     valid, status = _check_state(planner, start.astype(np.float32))
     if not valid:
         return failure("pose_start_robot_collision", status)
-    lower, upper = _joint_bounds(planner, 13)
+    lower, upper = _joint_bounds(planner, start.size)
     hand = start[n_arm:].copy()
     previous = start.copy()
     geometric = [start.astype(np.float32)]
@@ -591,7 +593,7 @@ def plan_jacobian_tip_axis_alignment(
     options: JacobianStrokeOptions | None = None,
     joint_increment_smoothness: float = DEFAULT_JOINT_INCREMENT_SMOOTHNESS,
 ) -> JacobianStrokeResult:
-    """Align the held cylinder tip/axis without changing Inspire joints."""
+    """Align the held cylinder tip/axis without changing end-effector joints."""
     goals = _tip_axis_waypoints(
         start_wrist_pose, pivot_robot=pivot_robot,
         translation_robot=translation_robot,

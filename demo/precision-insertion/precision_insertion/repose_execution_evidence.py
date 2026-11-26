@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 from autodex.utils.robot_config import FR3_CLEAR_VIEW, INSPIRE_INIT
+from .end_effector import full_dof_end_effector_spec
 
 
 SCHEMA = "precision_insertion_repose_execution_evidence_v1"
@@ -141,6 +142,7 @@ def verify_repose_execution_evidence(
                 paths["post_release_lift"][0],
                 paths["post_release_lift"][-1],
                 paths["post_release_retract"][-1]))
+        spec = full_dof_end_effector_spec(expected[0].shape[0])
         previous = _finite(attempt_started_at_s, "attempt start")
         for index, (item, endpoint) in enumerate(zip(checkpoints, expected)):
             state = item.get("state")
@@ -155,15 +157,17 @@ def verify_repose_execution_evidence(
             # finger closure after squeeze. The open-hand release and exit
             # checkpoints still require all thirteen measured joints.
             checked = slice(None, 7) if index < 4 else slice(None)
-            if (stamp <= previous or q.shape != (13,) or
+            if (stamp <= previous or q.shape != (spec.full_dof,) or
                     not np.isfinite(q).all() or
-                    endpoint.shape != (13,) or
+                    endpoint.shape != (spec.full_dof,) or
                     np.max(np.abs(q[checked] - endpoint[checked])) > 0.05):
                 raise ValueError("stock repose missed its planned checkpoint")
             previous = stamp
         final_q = np.asarray(checkpoints[-1]["state"]["full_q"], dtype=float)
+        expected_open = (np.asarray(INSPIRE_INIT, dtype=float)
+                         if spec.name == "inspire" else spec.open_q)
         if (np.max(np.abs(final_q[:7] - FR3_CLEAR_VIEW)) > 0.05 or
-                np.max(np.abs(final_q[7:] - INSPIRE_INIT)) > 0.05):
+                np.max(np.abs(final_q[7:] - expected_open)) > 0.05):
             raise ValueError("stock repose did not clear the camera view")
         return {
             "path": str(source), "sha256": _sha(source),

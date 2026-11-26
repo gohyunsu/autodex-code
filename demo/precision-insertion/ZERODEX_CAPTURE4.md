@@ -108,6 +108,33 @@ For the independent NAS project bundle and post-run recording upload, see
 
 ## Code layout and machine settings
 
+### End-effector modes
+
+The ZeroDex machine profile defaults to the stock Franka parallel gripper;
+this does **not** remove or replace the Inspire implementation.  The selected
+end effector is an explicit runtime contract:
+
+```bash
+# ZeroDex default: 7 arm + 2 gripper joints, analytic cylinder grasps.
+PRECISION_END_EFFECTOR=franka_gripper \
+  bash demo/precision-insertion/run_zerodex_capture4.sh --check
+
+# Preserved AutoDex/Inspire route: 7 arm + 6 Inspire joints, BODex grasps.
+PRECISION_END_EFFECTOR=inspire \
+  bash demo/precision-insertion/run_zerodex_capture4.sh --check
+```
+
+Both modes use the same session, perception, lift, transfer, MV-GoTrack,
+pre-insertion correction, insertion, release and final-label state machine.
+They deliberately do not share grasp files or robot geometry.  The gripper
+mode selects `fr3_gripper`, the nine-DoF URDF, analytic standing/lying cylinder
+grasps and `AutoDex/candidates/franka_gripper`; the Inspire mode selects
+`fr3_inspire`, the thirteen-DoF URDF, the original BODex candidates and
+`AutoDex/candidates/inspire`.  Lift-image crops and reset/repose execution use
+the measured joint-vector width to keep their FK and opening commands in the
+same selected contract.  No conversion from an Inspire grasp to a gripper
+grasp (or the reverse) is attempted.
+
 `run_zerodex_capture4.sh` is the single entry point for `--check`,
 `--camera-only`, `--plan-only`, and `--run`. It sources
 [`config/zerodex_capture4.env.sh`](config/zerodex_capture4.env.sh), which

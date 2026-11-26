@@ -216,7 +216,8 @@ def test_zerodex_launcher_provides_demo_collision_compat(tmp_path):
     root = demo.parents[1]
     stage = tmp_path / "stage"
     stage.mkdir()
-    for name in ("launch.json", "recipient_gap5_endpoint_catalog_straight.json",
+    for name in ("launch.json",
+                 "recipient_gap5_endpoint_catalog_franka_gripper.json",
                  "franka_runtime.json"):
         (stage / name).write_text("{}\n", encoding="utf-8")
     fake_check = tmp_path / "fake_check"

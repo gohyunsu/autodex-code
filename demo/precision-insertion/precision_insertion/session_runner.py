@@ -49,6 +49,7 @@ from .released_insertion_checkpoint import (
     write_released_insertion_checkpoint,
 )
 from .endpoint import _load_mesh
+from .end_effector import end_effector_spec, full_dof_end_effector_spec
 from .failed_return_evidence import (
     verify_failed_return_execution, write_failed_return_plan,
 )
@@ -874,36 +875,69 @@ class SessionRunner:
                 _digest(self.catalog) != self.catalog_sha256):
             raise ValueError("frozen session or endpoint catalogue changed")
         limits.validate()
-        result = preflight_v8_repose_transition(
-            planner=planner, shared_root=self.shared_root, mode=self.mode,
-            calibration=self.calibration, trial_scene=self._preflight.trial_scene,
-            catalog=self.catalog,
-            from_pose_stem=self._preflight.pose_class["stem"],
-            to_pose_stem=to_pose_stem, height_cm=height_cm,
-            release_xy_robot_m=release_xy_robot_m,
-            live_start_q=live_start_q,
-            observation_id=key_observation.capture_id,
-            key_capture_timestamp_s=(
-                key_observation.selected_acquisition_timestamp_s),
-            start_q_acquisition_timestamp_s=start_q_acquisition_timestamp_s,
-            max_state_skew_s=max_state_skew_s,
-            max_pose_error_deg=max_pose_error_deg,
-            max_center_in_hand_drift_m=max_center_in_hand_drift_m,
-            max_symmetry_axis_tilt_deg=max_symmetry_axis_tilt_deg,
-            minimum_rest_socket_clearance_m=minimum_rest_socket_clearance_m,
-            minimum_board_edge_clearance_m=minimum_board_edge_clearance_m,
-            limits=limits, attempted_insertion=self.attempted_candidates,
-            covered_scenes=(),
-            attempted_reset_ids=tuple(sorted(
-                seed_id for row_height, row_target, seed_id in
-                self._same_capture_reset_rejects
-                if row_height == height_cm and row_target == to_pose_stem)),
-            reset_candidate_root=reset_candidate_root,
-            max_seed_attempts=max_seed_attempts,
-            retreat_goal_arm_q=retreat_goal_arm_q,
-            minimum_release_key_clearance_m=(
-                minimum_release_key_clearance_m),
-            release_height_m=(0.0 if self.mode.family == "cylinder" else None))
+        spec = end_effector_spec()
+        if spec.name == "franka_gripper":
+            if (retreat_goal_arm_q is None or
+                    minimum_release_key_clearance_m is None):
+                raise ValueError(
+                    "Franka-gripper repose needs release and retreat planning")
+            # The parallel gripper does not use Inspire/BODex reset seeds.
+            # Reuse the same fresh-pose analytic pickup used by the ordinary
+            # cylinder trial, then the common socket-aware held/place chain.
+            from .original_pose_restoration import plan_original_pose_restoration
+            result, _ = plan_original_pose_restoration(
+                planner=planner, shared_root=self.shared_root, mode=self.mode,
+                calibration=self.calibration, catalog=self.catalog,
+                key_observation=key_observation,
+                measured_start_q=np.asarray(live_start_q, dtype=np.float64),
+                start_q_timestamp_s=start_q_acquisition_timestamp_s,
+                max_state_skew_s=max_state_skew_s,
+                target_pose_stem=to_pose_stem,
+                target_xy_robot_m=release_xy_robot_m,
+                release_height_cm=height_cm,
+                max_pose_error_deg=max_pose_error_deg,
+                minimum_rest_socket_clearance_m=(
+                    minimum_rest_socket_clearance_m),
+                minimum_board_edge_clearance_m=(
+                    minimum_board_edge_clearance_m),
+                minimum_release_key_clearance_m=(
+                    minimum_release_key_clearance_m),
+                retreat_goal_arm_q=np.asarray(
+                    retreat_goal_arm_q, dtype=np.float64),
+                limits=limits)
+        else:
+            result = preflight_v8_repose_transition(
+                planner=planner, shared_root=self.shared_root, mode=self.mode,
+                calibration=self.calibration,
+                trial_scene=self._preflight.trial_scene,
+                catalog=self.catalog,
+                from_pose_stem=self._preflight.pose_class["stem"],
+                to_pose_stem=to_pose_stem, height_cm=height_cm,
+                release_xy_robot_m=release_xy_robot_m,
+                live_start_q=live_start_q,
+                observation_id=key_observation.capture_id,
+                key_capture_timestamp_s=(
+                    key_observation.selected_acquisition_timestamp_s),
+                start_q_acquisition_timestamp_s=start_q_acquisition_timestamp_s,
+                max_state_skew_s=max_state_skew_s,
+                max_pose_error_deg=max_pose_error_deg,
+                max_center_in_hand_drift_m=max_center_in_hand_drift_m,
+                max_symmetry_axis_tilt_deg=max_symmetry_axis_tilt_deg,
+                minimum_rest_socket_clearance_m=minimum_rest_socket_clearance_m,
+                minimum_board_edge_clearance_m=minimum_board_edge_clearance_m,
+                limits=limits, attempted_insertion=self.attempted_candidates,
+                covered_scenes=(),
+                attempted_reset_ids=tuple(sorted(
+                    seed_id for row_height, row_target, seed_id in
+                    self._same_capture_reset_rejects
+                    if row_height == height_cm and row_target == to_pose_stem)),
+                reset_candidate_root=reset_candidate_root,
+                max_seed_attempts=max_seed_attempts,
+                retreat_goal_arm_q=retreat_goal_arm_q,
+                minimum_release_key_clearance_m=(
+                    minimum_release_key_clearance_m),
+                release_height_m=(
+                    0.0 if self.mode.family == "cylinder" else None))
         if (result.observation_id != key_observation.capture_id or
                 result.from_pose_stem != self._preflight.pose_class["stem"] or
                 result.to_pose_stem != to_pose_stem or
@@ -2118,12 +2152,13 @@ class SessionRunner:
                 minimum_board_edge_clearance_m), limits=limits)
         if held.status != "sampled_held_path_pass_release_unplanned":
             raise ValueError(f"failed held return was rejected: {held.status}")
-        from autodex.utils.robot_config import FR3_CLEAR_VIEW, INSPIRE_INIT
+        from autodex.utils.robot_config import FR3_CLEAR_VIEW
+        spec = full_dof_end_effector_spec(len(held_state.full_q))
 
         release = plan_repose_release_exit(
             planner=planner, trial_scene=self._preflight.trial_scene,
             shared_root=self.shared_root, calibration=self.calibration,
-            mode=self.mode, held_plan=held, release_hand_q=INSPIRE_INIT,
+            mode=self.mode, held_plan=held, release_hand_q=spec.open_q,
             retreat_goal_arm_q=FR3_CLEAR_VIEW,
             minimum_release_key_clearance_m=(
                 minimum_release_key_clearance_m), limits=limits)

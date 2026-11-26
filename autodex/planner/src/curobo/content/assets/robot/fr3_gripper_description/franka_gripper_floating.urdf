@@ -1,0 +1,113 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="franka_gripper_floating">
+  <link name="world" />
+  <link name="x_link" />
+  <joint name="x_joint" type="prismatic">
+    <parent link="world" />
+    <child link="x_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <axis xyz="1 0 0" />
+    <limit effort="100" lower="-2" upper="2" velocity="4" />
+  </joint>
+  <link name="y_link" />
+  <joint name="y_joint" type="prismatic">
+    <parent link="x_link" />
+    <child link="y_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+    <limit effort="100" lower="-2" upper="2" velocity="4" />
+  </joint>
+  <link name="z_link" />
+  <joint name="z_joint" type="prismatic">
+    <parent link="y_link" />
+    <child link="z_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit effort="100" lower="-2" upper="2" velocity="4" />
+  </joint>
+  <link name="rx_link" />
+  <joint name="x_rotation_joint" type="revolute">
+    <parent link="z_link" />
+    <child link="rx_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <axis xyz="1 0 0" />
+    <limit effort="100" lower="-6.28318530718" upper="6.28318530718" velocity="4" />
+  </joint>
+  <link name="ry_link" />
+  <joint name="y_rotation_joint" type="revolute">
+    <parent link="rx_link" />
+    <child link="ry_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+    <limit effort="100" lower="-6.28318530718" upper="6.28318530718" velocity="4" />
+  </joint>
+  <link name="fr3_hand_mount" />
+  <joint name="z_rotation_joint" type="revolute">
+    <parent link="ry_link" />
+    <child link="fr3_hand_mount" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit effort="100" lower="-6.28318530718" upper="6.28318530718" velocity="4" />
+  </joint>
+  <joint name="floating_to_hand" type="fixed">
+    <parent link="fr3_hand_mount" />
+    <child link="fr3_hand" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint>
+  <link name="fr3_hand">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../../../../../../../../src/validation/robothome/meshes/robot_ee/franka_hand_white/visual/hand.dae" />
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../../../../../../../../src/validation/robothome/meshes/robot_ee/franka_hand_white/collision/hand.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="fr3_leftfinger">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../../../../../../../../src/validation/robothome/meshes/robot_ee/franka_hand_white/visual/finger.dae" />
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../../../../../../../../src/validation/robothome/meshes/robot_ee/franka_hand_white/visual/finger.dae" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="fr3_rightfinger">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../../../../../../../../src/validation/robothome/meshes/robot_ee/franka_hand_white/visual/finger.dae" />
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../../../../../../../../src/validation/robothome/meshes/robot_ee/franka_hand_white/visual/finger.dae" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fr3_finger_joint1" type="prismatic">
+    <parent link="fr3_hand" />
+    <child link="fr3_leftfinger" />
+    <origin xyz="0 0 0.0584" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+    <limit effort="20" lower="0" upper="0.04" velocity="0.2" />
+  </joint>
+  <joint name="fr3_finger_joint2" type="prismatic">
+    <parent link="fr3_hand" />
+    <child link="fr3_rightfinger" />
+    <origin xyz="0 0 0.0584" rpy="0 0 3.141592653589793" />
+    <axis xyz="0 1 0" />
+    <limit effort="20" lower="0" upper="0.04" velocity="0.2" />
+  </joint>
+</robot>

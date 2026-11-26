@@ -19,6 +19,7 @@ from typing import Callable
 
 import numpy as np
 
+from .end_effector import end_effector_spec
 from .live_robot_state import LiveRobotState
 from .measured_lift_preflight import (
     MeasuredLiftChain, verify_measured_lift_chain,
@@ -142,6 +143,7 @@ def execute_bound_measured_lift(
             not callable(getattr(adapter, "follow_lift", None)) or
             not callable(getattr(adapter, "stop_and_acknowledge", None))):
         raise ValueError("lift needs a selected attempt and guarded adapter")
+    spec = end_effector_spec(pre_state.end_effector)
     _reject_known_stock_follower(adapter)
     attempt = runner.active_attempt
     chain = runner._measured_lift_preflight
@@ -174,11 +176,12 @@ def execute_bound_measured_lift(
         raise ValueError("held lift trajectory bytes changed")
     with np.load(trajectory_file, allow_pickle=False) as archive:
         lift = np.asarray(archive["lift"], dtype=np.float64)
-    if (lift.ndim != 2 or lift.shape[1] != 13 or len(lift) < 2 or
+    if (lift.ndim != 2 or lift.shape[1] != spec.full_dof or len(lift) < 2 or
             not np.all(np.isfinite(lift)) or
             not np.array_equal(lift, chain.planning.lift_trajectory) or
             not np.allclose(lift[:, 7:], lift[0, 7:], atol=1e-8, rtol=0)):
-        raise ValueError("saved measured lift does not hold the Inspire grasp")
+        raise ValueError(
+            f"saved measured lift does not hold the {spec.name} grasp")
     pre_state.validate(
         max_arm_hand_skew_s=limits.max_arm_hand_skew_s,
         max_hand_command_error_raw=limits.max_hand_command_error_raw,

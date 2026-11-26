@@ -39,6 +39,7 @@ from autodex.executor.timing import (
 )
 from autodex.utils.robot_config import (
     FR3_INIT, FR3_CLEAR_VIEW, INSPIRE_INIT, FR3_INSPIRE_LINK_TO_WRIST,
+    FR3_GRIPPER_LINK_TO_WRIST,
 )
 from autodex.utils.conversion import cart2se3, se32cart
 from autodex.executor.real import _convert_inspire   # rad -> 0-1000 controller units
@@ -85,6 +86,12 @@ class ContactAbort(RuntimeError):
 
 
 class FrankaExecutor:
+    # Preserve the historical Inspire contract for lightweight test doubles
+    # and old subclasses that allocate with object.__new__.  Normal live
+    # construction always overwrites both fields in __init__.
+    hand_name = "inspire"
+    _is_parallel_gripper = False
+
     def __init__(self, hand_name: str = "inspire", dt: float = 0.01,
                  squeeze_level: int = 2, arm_speed_scale: float = 1,
                  ctrl_dt: float = 0.02, joint_vmax: float = 1.2,
@@ -94,11 +101,22 @@ class FrankaExecutor:
                  land_tol: float = 0.02, follow_timeout_s: float = 90.0,
                  follow_log_every_s: float = 2.0, accel_max: float = 4.0,
                  ee_to_hand: Optional[np.ndarray] = None,
-                 object_safety_speed_scale: float = OBJECT_SAFETY_SPEED_SCALE):
-        assert hand_name in ("inspire", "inspire_left"), \
-            f"franka executor supports inspire hands only, got {hand_name}"
+                 object_safety_speed_scale: float = OBJECT_SAFETY_SPEED_SCALE,
+                 gripper_force_n: float = 60.0,
+                 gripper_speed_m_s: float = 0.05):
+        aliases = {"gripper": "franka_gripper",
+                   "stock_gripper": "franka_gripper"}
+        hand_name = aliases.get(hand_name, hand_name)
+        assert hand_name in ("inspire", "inspire_left", "franka_gripper"), \
+            f"unsupported Franka end effector: {hand_name}"
         self.dt = dt
         self.hand_name = hand_name
+        self._is_parallel_gripper = hand_name == "franka_gripper"
+        if (not np.isfinite(gripper_force_n) or gripper_force_n <= 0 or
+                not np.isfinite(gripper_speed_m_s) or gripper_speed_m_s <= 0):
+            raise ValueError("Franka gripper force and speed must be positive")
+        self.gripper_force_n = float(gripper_force_n)
+        self.gripper_speed_m_s = float(gripper_speed_m_s)
         self.squeeze_level = squeeze_level
         self.arm_speed_scale = arm_speed_scale   # free-space blocking-move speed (home)
         self.ctrl_dt = ctrl_dt                   # velocity-stream command period (s)
@@ -165,21 +183,29 @@ class FrankaExecutor:
         # the object anyway can park at FR3_INIT instead and save the J0 swing
         # that ``execute`` would otherwise undo at the next approach.
         self.retract_goal = self._clear_view
-        self._hand_init = np.asarray(INSPIRE_INIT, dtype=np.float64)
+        self._hand_init = np.asarray(
+            [0.04, 0.04] if self._is_parallel_gripper else INSPIRE_INIT,
+            dtype=np.float64)
         # Finger config (planner order, radians) the hand was last commanded to.
         # reset() plans its retract from this, so it must track reality.
         self._last_hand_qpos = self._hand_init.copy()
         # Last command actually sent to the hand (controller units) — the start
         # point for _ramp_hand, so a ramp never jumps from a stale value.
-        self._last_hand_action = _convert_inspire(self._hand_init)
+        self._last_hand_action = (
+            self._hand_init.copy() if self._is_parallel_gripper
+            else _convert_inspire(self._hand_init))
         # Historical private name used by other AutoDex helpers. For FR3 this
         # maps the measured O_T_EE frame (URDF fr3_link8) to Inspire base_link.
         self._link6_to_wrist = np.asarray(
-            _FR3_DEFAULT_EE_TO_WRIST if ee_to_hand is None else ee_to_hand,
+            ((FR3_GRIPPER_LINK_TO_WRIST.copy() if self._is_parallel_gripper
+              else _FR3_DEFAULT_EE_TO_WRIST)
+             if ee_to_hand is None else ee_to_hand),
             dtype=np.float64).copy()
         if self._link6_to_wrist.shape != (4, 4):
             raise ValueError("FR3 EE-to-hand transform must be 4x4")
-        self._convert = _convert_inspire
+        self._convert = (lambda value: (
+            np.asarray(value, dtype=np.float64).copy()
+            if self._is_parallel_gripper else _convert_inspire(value)))
         self.state_timestamps = []
         # Per-call breakdowns remain runtime diagnostics. Persisted durations
         # come from the shared pipeline event spans.
@@ -195,7 +221,7 @@ class FrankaExecutor:
 
         from paradex.io.robot_controller import get_arm, get_hand
         self.arm = get_arm("franka")
-        self.hand = get_hand(hand_name)
+        self.hand = self.arm if self._is_parallel_gripper else get_hand(hand_name)
 
         # A previous run killed mid-motion (watchdog SIGKILL) leaves the daemon's
         # velocity stream ACTIVE, and that stream holds g_robot_mutex — every
@@ -262,8 +288,7 @@ class FrankaExecutor:
         # move) is indistinguishable from a hang
         print(f"[franka] >>> {state}", flush=True)
 
-    @staticmethod
-    def _clip_hand(action: np.ndarray) -> np.ndarray:
+    def _clip_hand(self, action: np.ndarray) -> np.ndarray:
         """Clamp an inspire command to the controller's 0-1000 range.
 
         The squeeze / reverse-squeeze ramps EXTRAPOLATE past grasp
@@ -274,13 +299,39 @@ class FrankaExecutor:
         (only ``-1`` is special-cased), so e.g. -25 reaches the hand as 65511
         and the finger jumps to a garbage angle — which then gets HELD for the
         whole lift via the ``hold`` array."""
-        return np.clip(np.asarray(action, dtype=np.float64), 0.0, 1000.0)
+        upper = 0.04 if self._is_parallel_gripper else 1000.0
+        return np.clip(np.asarray(action, dtype=np.float64), 0.0, upper)
 
     def _move_hand(self, action: np.ndarray):
         action = self._clip_hand(action)
-        self.hand.move(action)
+        if self._is_parallel_gripper:
+            response = self.arm.open_gripper(
+                width=float(np.sum(action)), speed=self.gripper_speed_m_s)
+            if isinstance(response, dict) and response.get("type") == "error":
+                raise RuntimeError(response.get("message", "gripper open failed"))
+            self._last_hand_qpos = action.copy()
+        else:
+            self.hand.move(action)
         self._last_hand_action = action
         time.sleep(self.dt)
+
+    def _close_parallel_gripper(self) -> np.ndarray:
+        """Force-close once and return measured two-finger planner joints."""
+        response = self.arm.grasp(
+            force=self.gripper_force_n, speed=self.gripper_speed_m_s,
+            eps_inner=0.005, eps_outer=0.005)
+        if isinstance(response, dict) and response.get("type") == "error":
+            raise RuntimeError(response.get("message", "gripper grasp failed"))
+        state = self.arm.get_data() or {}
+        width = float(state.get("gripper_width", np.nan))
+        if not np.isfinite(width):
+            width = (float(response.get("final_width", 0.03))
+                     if isinstance(response, dict) else 0.03)
+        q = np.asarray([np.clip(width * 0.5, 0.0, 0.04)] * 2,
+                       dtype=np.float64)
+        self._last_hand_qpos = q.copy()
+        self._last_hand_action = q.copy()
+        return q
 
     def set_speed_profile_planner(self, planner) -> None:
         """Bind the live planner used to FK generic trajectory endpoints.
@@ -367,7 +418,8 @@ class FrankaExecutor:
             return indices, [names[i] for i in indices]
         indices = [
             i for i, name in enumerate(names)
-            if name == "base_link" or name.startswith(("right_", "left_"))
+            if (name == "base_link" or name.startswith(("right_", "left_")) or
+                name in {"fr3_hand", "fr3_leftfinger", "fr3_rightfinger"})
         ]
         if not indices:
             raise RuntimeError("planner exposes no hand/palm link positions")
@@ -514,6 +566,12 @@ class FrankaExecutor:
 
     def get_hand_qpos(self) -> tuple[np.ndarray, str]:
         """Return planner-space hand state with truthful measurement provenance."""
+        if self._is_parallel_gripper:
+            width = float(self.arm.get_data()["gripper_width"])
+            q = np.asarray([np.clip(width * 0.5, 0.0, 0.04)] * 2,
+                           dtype=np.float64)
+            self._last_hand_qpos = q.copy()
+            return q, "measured_franka_gripper_width"
         return (np.asarray(self._last_hand_qpos, dtype=np.float64).copy(),
                 "commanded_nominal")
 
@@ -598,6 +656,9 @@ class FrankaExecutor:
         controller (``setspeed`` 1000), which is what makes the fingers snap
         open — the target itself is fine, the step is not."""
         target = self._clip_hand(target)
+        if self._is_parallel_gripper:
+            self._move_hand(target)
+            return
         start = self._clip_hand(self._last_hand_action)
         if np.max(np.abs(target - start)) < 1.0:      # already there
             self._move_hand(target)
@@ -962,7 +1023,7 @@ class FrankaExecutor:
                 dq_prev = dq
                 self.arm.set_joint_velocity(
                     dq, duration_ms=stream_command_validity_ms(self.ctrl_dt))
-                if hand_traj is not None:
+                if hand_traj is not None and not self._is_parallel_gripper:
                     hand_cmd = self._clip_hand(
                         hand_traj[min(k_arm, len(hand_traj) - 1)])
                     self.hand.move(hand_cmd)
@@ -1036,7 +1097,7 @@ class FrankaExecutor:
         # normal exit can leave k_arm short of the end — without this the fingers
         # stop at a mid-trajectory shape. Deliberately placed after the try
         # block: a ContactAbort must NOT drive the fingers any further.
-        if hand_traj is not None:
+        if hand_traj is not None and not self._is_parallel_gripper:
             self._ramp_hand(hand_traj[-1])
         # Land on the final config only if the stream left a real residual —
         # a blocking move() tears down the velocity stream and starts a position
@@ -1067,11 +1128,14 @@ class FrankaExecutor:
     def start_recording(self, save_dir: str):
         import os
         os.makedirs(save_dir, exist_ok=True)
-        self.hand.start(os.path.join(save_dir, "hand"))
+        if not self._is_parallel_gripper:
+            self.hand.start(os.path.join(save_dir, "hand"))
         self.arm.start(os.path.join(save_dir, "arm"))
 
     def stop_recording(self):
-        for ctrl in (self.arm, self.hand):
+        controllers = ((self.arm,) if self._is_parallel_gripper
+                       else (self.arm, self.hand))
+        for ctrl in controllers:
             if (getattr(ctrl, "save_path", None) is not None
                     or getattr(ctrl, "capture_path", None) is not None):
                 ctrl.stop()
@@ -1122,7 +1186,7 @@ class FrankaExecutor:
         pickup_trace_id = (self._timing_recorder.begin(
             phase="execution", kind="motion", name="pickup_and_lift")
             if self._timing_recorder is not None else None)
-        traj = np.asarray(plan_result.traj)                 # (T, 13) = 7 arm + 6 hand
+        traj = np.asarray(plan_result.traj)
         pg_hand = self._convert(plan_result.pregrasp_pose)
         g_hand = self._convert(plan_result.grasp_pose)
 
@@ -1134,6 +1198,10 @@ class FrankaExecutor:
             self._move_to(self._arm_init, what="execute-init")
             self.last_execute_timing["init_motion_s"] = round(
                 time.perf_counter() - t_init, 3)
+        if self._is_parallel_gripper:
+            # Keep the jaws open before and throughout the arm approach.  The
+            # stock gripper is not a per-waypoint finger-servo device.
+            self._move_hand(pg_hand)
 
         # 2. Approach — stream the planned arm path; hand follows the plan's hand
         #    columns.  Slow only this final approach based on the live
@@ -1162,18 +1230,21 @@ class FrankaExecutor:
         # 4. Grasp — ramp pregrasp -> grasp for a controlled close.
         self._log("grasp")
         t_grasp = time.perf_counter()
-        for i in range(1, 51):
-            t = i / 50.0
-            self._move_hand(pg_hand * (1 - t) + g_hand * t)
-            time.sleep(0.01)
+        if self._is_parallel_gripper:
+            measured_grasp_q = self._close_parallel_gripper()
+        else:
+            for i in range(1, 51):
+                t = i / 50.0
+                self._move_hand(pg_hand * (1 - t) + g_hand * t)
+                time.sleep(0.01)
         self.last_execute_timing["grasp_motion_s"] = round(
             time.perf_counter() - t_grasp, 3)
 
         # 5. Squeeze
         self._log("squeeze")
         t_squeeze = time.perf_counter()
-        s_hand = g_hand
-        for i in range(self.squeeze_level * 5):
+        s_hand = (measured_grasp_q if self._is_parallel_gripper else g_hand)
+        for i in range(0 if self._is_parallel_gripper else self.squeeze_level * 5):
             # clipped here (not only inside _move_hand) because s_hand is
             # RETURNED and then held for the whole lift / place descent — an
             # out-of-range value would persist through both.
@@ -1184,7 +1255,9 @@ class FrankaExecutor:
             time.perf_counter() - t_squeeze, 3)
         # squeeze overshoots grasp; grasp_pose is the closest planner-representable
         # config, so that is what reset should plan the retract from.
-        self._last_hand_qpos = np.asarray(plan_result.grasp_pose, dtype=np.float64)
+        if not self._is_parallel_gripper:
+            self._last_hand_qpos = np.asarray(
+                plan_result.grasp_pose, dtype=np.float64)
         self._holding_object = True
 
         if skip_lift:
@@ -1300,6 +1373,9 @@ class FrankaExecutor:
         ``open_to_init=True`` continues pregrasp -> hand_init as a further ramp.
         Never send that as a single command — the inspire controller runs at
         ``setspeed`` 1000, so one step is a max-speed slam."""
+        if self._is_parallel_gripper:
+            self._move_hand(self._hand_init if open_to_init else pg_hand)
+            return
         sl = self.squeeze_level
         # reverse squeeze (same step rate as the squeeze ramp)
         for i in range(sl * 5):
@@ -1880,7 +1956,9 @@ class FrankaExecutor:
                                                        cancel_futures=True)
         except Exception:
             pass
-        for ctrl in (self.arm, self.hand):
+        controllers = ((self.arm,) if self._is_parallel_gripper
+                       else (self.arm, self.hand))
+        for ctrl in controllers:
             try:
                 ctrl.end()
             except Exception:

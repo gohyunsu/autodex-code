@@ -16,6 +16,7 @@ import time
 import numpy as np
 
 from autodex.utils.sync import convert_inspire_raw
+from .end_effector import hand_q_from_gripper_width, normalize_end_effector
 
 
 class FrankaStateUnavailable(ValueError):
@@ -39,6 +40,8 @@ class LiveRobotState:
     max_hand_command_error_raw: float
     wrench: np.ndarray
     source: str = "robot_joint_feedback"
+    end_effector: str = "inspire"
+    gripper_grasping: bool | None = None
 
     def validate(self, *, max_arm_hand_skew_s: float,
                  max_hand_command_error_raw: float,
@@ -50,21 +53,37 @@ class LiveRobotState:
             raise ValueError("feedback validation limits must be positive")
         if self.source != "robot_joint_feedback":
             raise ValueError("hand pose is not measured robot feedback")
-        q = _finite_vector(self.full_q, 13, "FR3/Inspire full qpos")
+        end_effector = normalize_end_effector(self.end_effector)
+        hand_dof = 2 if end_effector == "franka_gripper" else 6
+        q = _finite_vector(self.full_q, 7 + hand_dof,
+                           f"FR3/{end_effector} full qpos")
         velocity = _finite_vector(self.arm_qvel, 7, "FR3 qvel")
         if np.max(np.abs(velocity)) > max_arm_velocity_rad_s:
             raise ValueError("FR3 has not reached a stationary post-lift hold")
-        measured = _finite_vector(self.hand_raw_measured, 6,
-                                  "measured Inspire raw qpos")
-        commanded = _finite_vector(self.hand_raw_commanded, 6,
-                                   "commanded Inspire raw action")
+        measured = _finite_vector(self.hand_raw_measured, hand_dof,
+                                  f"measured {end_effector} qpos")
+        commanded = _finite_vector(self.hand_raw_commanded, hand_dof,
+                                   f"commanded {end_effector} action")
         _finite_vector(self.wrench, 6, "FR3 wrench")
-        if (np.any(measured < 0) or np.any(measured > 1000) or
-                np.any(commanded < 0) or np.any(commanded > 1000)):
-            raise ValueError("Inspire feedback/action lies outside 0..1000")
-        if not np.allclose(q[7:], convert_inspire_raw(measured[None, :])[0],
-                           atol=1e-8, rtol=0):
-            raise ValueError("planner hand joints disagree with measured raw motors")
+        if end_effector == "inspire":
+            if (np.any(measured < 0) or np.any(measured > 1000) or
+                    np.any(commanded < 0) or np.any(commanded > 1000)):
+                raise ValueError("Inspire feedback/action lies outside 0..1000")
+            expected_hand = convert_inspire_raw(measured[None, :])[0]
+        else:
+            if (np.any(measured < 0) or np.any(measured > 0.04 + 1e-8) or
+                    np.any(commanded < 0) or np.any(commanded > 0.04 + 1e-8)):
+                raise ValueError("Franka finger joints lie outside 0..0.04 m")
+            expected_hand = measured
+            if self.gripper_grasping is not None and type(
+                    self.gripper_grasping) is not bool:
+                raise ValueError("gripper_grasping must be Boolean when present")
+        if not np.allclose(q[7:], expected_hand, atol=1e-8, rtol=0):
+            if end_effector == "inspire":
+                raise ValueError(
+                    "planner hand joints disagree with measured raw motors")
+            raise ValueError(
+                "planner gripper joints disagree with measured fingers")
         error = float(np.max(np.abs(measured - commanded)))
         if not math.isclose(error, float(self.max_hand_command_error_raw),
                             abs_tol=1e-8):
@@ -94,6 +113,8 @@ class LiveRobotState:
             "max_hand_command_error_raw": self.max_hand_command_error_raw,
             "wrench": self.wrench.tolist(),
             "source": self.source,
+            "end_effector": normalize_end_effector(self.end_effector),
+            "gripper_grasping": self.gripper_grasping,
             "scope": "one_feedback_snapshot_not_motion_or_contact_authorization",
         }
 
@@ -214,5 +235,69 @@ def read_live_franka_inspire_state(
                 now_s=now_s)
         except (FrankaStateUnavailable, FeedbackTimeAlignmentUnavailable):
             if now_s is not None or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
+
+
+def _read_live_franka_gripper_state_once(
+    *, arm, max_sample_age_s: float, max_arm_velocity_rad_s: float,
+) -> LiveRobotState:
+    """Read FR3 arm and stock gripper from their shared daemon packet."""
+    if (not math.isfinite(max_sample_age_s) or max_sample_age_s <= 0 or
+            not math.isfinite(max_arm_velocity_rad_s) or
+            max_arm_velocity_rad_s <= 0):
+        raise ValueError("joint age and velocity limits must be positive")
+    data = arm.get_data()
+    if not isinstance(data, dict):
+        raise FrankaStateUnavailable("FR3 state stream is unavailable")
+    uptime = float(data.get("time", float("nan")))
+    age = time.monotonic() - uptime
+    if not math.isfinite(age) or age < 0 or age > max_sample_age_s:
+        raise FrankaStateUnavailable("FR3 state stream is stale")
+    timestamp = time.time() - age
+    arm_q = _finite_vector(data.get("qpos"), 7, "FR3 qpos")
+    arm_qvel = _finite_vector(data.get("qvel"), 7, "FR3 qvel")
+    hand_q = hand_q_from_gripper_width(float(data.get("gripper_width", np.nan)))
+    result = LiveRobotState(
+        full_q=np.concatenate([arm_q, hand_q]),
+        arm_qvel=arm_qvel,
+        sample_timestamp_s=timestamp,
+        arm_timestamp_s=timestamp,
+        arm_robot_uptime_s=uptime,
+        hand_timestamp_s=timestamp,
+        hand_raw_measured=hand_q.copy(),
+        # The daemon publishes measured width but no independent target width.
+        # Keep the record truthful instead of inventing a command residual.
+        hand_raw_commanded=hand_q.copy(),
+        max_hand_command_error_raw=0.0,
+        wrench=_finite_vector(data.get("wrench"), 6, "FR3 wrench"),
+        end_effector="franka_gripper",
+        gripper_grasping=bool(data.get("gripper_grasping", False)),
+    )
+    # The arm/hand timestamps are identical and command error is not a stock
+    # gripper observable. Positive compatibility values satisfy the generic
+    # validation signature without adding a new runtime gate.
+    result.validate(
+        max_arm_hand_skew_s=1e-6,
+        max_hand_command_error_raw=1.0,
+        max_arm_velocity_rad_s=max_arm_velocity_rad_s)
+    return result
+
+
+def read_live_franka_gripper_state(
+    *, arm, max_sample_age_s: float, max_arm_velocity_rad_s: float,
+    max_feedback_wait_s: float = 5.0,
+) -> LiveRobotState:
+    """Wait for a fresh combined FR3/stock-gripper feedback packet."""
+    if not math.isfinite(max_feedback_wait_s) or max_feedback_wait_s <= 0:
+        raise ValueError("feedback retry wait must be positive")
+    deadline = time.monotonic() + max_feedback_wait_s
+    while True:
+        try:
+            return _read_live_franka_gripper_state_once(
+                arm=arm, max_sample_age_s=max_sample_age_s,
+                max_arm_velocity_rad_s=max_arm_velocity_rad_s)
+        except FrankaStateUnavailable:
+            if time.monotonic() >= deadline:
                 raise
             time.sleep(0.01)

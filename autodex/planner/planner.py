@@ -52,7 +52,7 @@ from autodex.utils.conversion import se32action, cart2se3
 from autodex.utils.robot_config import (
     INIT_STATE, XARM_INIT, INSPIRE_INIT, FR3_INIT,
     ALLEGRO_LINK6_TO_WRIST, INSPIRE_LINK6_TO_WRIST, INSPIRE_LEFT_LINK6_TO_WRIST,
-    FR3_INSPIRE_LINK_TO_WRIST,
+    FR3_INSPIRE_LINK_TO_WRIST, FR3_GRIPPER_LINK_TO_WRIST,
 )
 from .jacobian_stroke import (
     JacobianStrokeOptions,
@@ -303,6 +303,7 @@ class GraspPlanner:
         # FR3 (Franka) arm + inspire right hand. Same hand as "inspire", so the
         # floating-hand cfg and numerics are shared; only the arm differs.
         "fr3_inspire":  ("fr3_inspire.yml",       "inspire_floating.yml",      0.005, 32, InterpolateType.LINEAR_CUDA),
+        "fr3_gripper":  ("fr3_gripper.yml",       "franka_gripper_floating.yml", 0.005, 32, InterpolateType.LINEAR_CUDA),
     }
 
     def __init__(self, robot_cfg_path: Optional[str] = None, hand_cfg_path: Optional[str] = None,
@@ -349,6 +350,11 @@ class GraspPlanner:
             self._init_state = np.concatenate([FR3_INIT, INSPIRE_INIT]).astype(np.float32)
             self._link6_to_wrist_rot = FR3_INSPIRE_LINK_TO_WRIST[:3, :3]
             self._n_arm = len(FR3_INIT)
+        elif hand == "fr3_gripper":
+            self._init_state = np.concatenate([
+                FR3_INIT, np.asarray([0.04, 0.04])]).astype(np.float32)
+            self._link6_to_wrist_rot = FR3_GRIPPER_LINK_TO_WRIST[:3, :3]
+            self._n_arm = len(FR3_INIT)
         elif hand.startswith("inspire"):
             self._init_state = np.concatenate([XARM_INIT, INSPIRE_INIT]).astype(np.float32)
             self._link6_to_wrist_rot = INSPIRE_LINK6_TO_WRIST[:3, :3]
@@ -366,6 +372,10 @@ class GraspPlanner:
         # Precompute link6 y-axis in wrist frame for backward filter
         self._link6_y_in_wrist = np.linalg.inv(self._link6_to_wrist_rot) @ np.array([0, 1, 0])
         self._hand = hand
+        # The historical backward test is an Allegro/xArm convention. Both
+        # FR3 mounted end effectors are evaluated by collision/IK instead.
+        self._ignore_backward_filter = ("inspire" in hand or
+                                        hand == "fr3_gripper")
         self._use_cuda_graph = use_cuda_graph
         # Candidate searches deliberately test many paths expected to fail.
         # Detailed cuRobo checks and collision-mesh exports are opt-in.
@@ -937,7 +947,7 @@ class GraspPlanner:
 
         # Filter: backward + hand-table collision (no object mesh — hand should be near object)
         t0 = _time.time()
-        backward = np.zeros(len(wrist_se3), dtype=bool) if "inspire" in self._hand else (wrist_se3[:, :3, :3] @ self._link6_y_in_wrist)[:, 2] < 0.3
+        backward = np.zeros(len(wrist_se3), dtype=bool) if self._ignore_backward_filter else (wrist_se3[:, :3, :3] @ self._link6_y_in_wrist)[:, 2] < 0.3
         collision = self._check_collision(world_cfg_no_target, wrist_se3, pregrasp)
         filtered = backward | collision
         valid = np.where(~filtered)[0]
@@ -2607,7 +2617,7 @@ class GraspPlanner:
 
         t0 = _time.time()
         collision = self._check_collision(world_cfg, wrist_se3, pregrasp)
-        backward = np.zeros(len(wrist_se3), dtype=bool) if "inspire" in self._hand else (wrist_se3[:, :3, :3] @ self._link6_y_in_wrist)[:, 2] < 0.3
+        backward = np.zeros(len(wrist_se3), dtype=bool) if self._ignore_backward_filter else (wrist_se3[:, :3, :3] @ self._link6_y_in_wrist)[:, 2] < 0.3
         valid = np.where(~(collision | backward))[0]
         timing["collision_check_s"] = round(_time.time() - t0, 3)
 
@@ -2827,7 +2837,7 @@ class GraspPlanner:
         t0 = _time.time()
         N = len(wrist_se3)
         collision = self._check_collision(world_cfg, wrist_se3, pregrasp)
-        backward = np.zeros(len(wrist_se3), dtype=bool) if "inspire" in self._hand else (wrist_se3[:, :3, :3] @ self._link6_y_in_wrist)[:, 2] < 0.3
+        backward = np.zeros(len(wrist_se3), dtype=bool) if self._ignore_backward_filter else (wrist_se3[:, :3, :3] @ self._link6_y_in_wrist)[:, 2] < 0.3
         filtered = collision | backward
         valid = np.where(~filtered)[0]
         print(f"[planner] collision check: {_time.time() - t0:.2f}s")
@@ -3069,7 +3079,7 @@ class GraspPlanner:
 
         # 3. Filter: backward + hand-table collision
         t0 = _time.perf_counter()
-        backward = np.zeros(len(wrist_se3), dtype=bool) if "inspire" in self._hand else (wrist_se3[:, :3, :3] @ self._link6_y_in_wrist)[:, 2] < 0.3
+        backward = np.zeros(len(wrist_se3), dtype=bool) if self._ignore_backward_filter else (wrist_se3[:, :3, :3] @ self._link6_y_in_wrist)[:, 2] < 0.3
         collision, world_collision, self_collision = self._check_collision(
             world_cfg_no_target, wrist_se3, pregrasp, return_components=True
         )

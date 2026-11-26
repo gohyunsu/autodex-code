@@ -2,7 +2,7 @@
 
 The caller has already selected one v8 grasp and obtained AutoDex's pickup
 ``PlanResult`` for the fresh key scene. This module does *no* robot I/O. It
-replans the lift at the specified held Inspire pose, plans transfer and a
+replans the lift at the selected held end-effector pose, plans transfer and a
 continuous socket-axis Jacobian stroke, and audits the held
 key/hand along those dense trajectories. There is no guarded contact control,
 between-sample swept proof, release or physical success claim.
@@ -20,6 +20,7 @@ import numpy as np
 from autodex.utils.conversion import cart2se3
 
 from .axis_jacobian import plan_jacobian_axis_stroke
+from .end_effector import planner_end_effector_spec
 from .geometry import pose_angle_deg, validate_se3
 from .path_audit import PathAuditLimits, audit_held_joint_paths
 from .targets import InsertionTargets
@@ -61,7 +62,7 @@ class InsertionPreflight:
             },
             "sampled_held_path_audit": self.sampled_held_path_audit,
             "not_validated": [
-                "measured Inspire joint state or grasp rigidity after pickup",
+                "measured end-effector joint state or grasp rigidity after pickup",
                 "initial key/table support contact during squeeze",
                 "executor replay contract for this separately replanned held lift",
                 "continuous swept geometry between FK samples",
@@ -73,9 +74,11 @@ class InsertionPreflight:
 
 def _path(value: Any, name: str, start_q: np.ndarray,
           held_q: np.ndarray) -> np.ndarray:
+    full_dof = 7 + len(held_q)
     path = np.asarray(value, dtype=np.float64)
-    if path.ndim != 2 or path.shape[1] != 13 or len(path) < 2:
-        raise ValueError(f"{name} must be a nonempty dense 13-DOF path")
+    if path.ndim != 2 or path.shape[1] != full_dof or len(path) < 2:
+        raise ValueError(
+            f"{name} must be a nonempty dense {full_dof}-DOF path")
     if not np.all(np.isfinite(path)):
         raise ValueError(f"{name} contains non-finite joints")
     if not np.allclose(path[0], start_q, atol=1e-4, rtol=0):
@@ -83,7 +86,7 @@ def _path(value: Any, name: str, start_q: np.ndarray,
         raise ValueError(
             f"{name} does not start at the previous joint state "
             f"(max_abs_delta_rad={delta:.6g})")
-    # AutoDex's default Cartesian planner optimizes all 13 joints, even when
+    # AutoDex's Cartesian planner optimizes all configured joints, even when
     # the requested start and goal have identical fingers. Its interpolated
     # path can therefore contain small finger motion. Execute the optimized
     # arm path with the selected held hand pose instead; the downstream
@@ -91,6 +94,10 @@ def _path(value: Any, name: str, start_q: np.ndarray,
     path = path.copy()
     path[:, 7:] = held_q
     return path
+
+
+def _planner_end_effector(planner):
+    return planner_end_effector_spec(planner)
 
 
 def _goal_met(actual: np.ndarray, expected: np.ndarray,
@@ -127,16 +134,13 @@ def plan_insertion_after_pickup(
     step = float(axial_waypoint_step_m)
     if not math.isfinite(step) or not 0 < step <= 0.005:
         raise ValueError("axial waypoint step must be finite and <= 5 mm")
+    spec = _planner_end_effector(planner)
     held = np.asarray(held_hand_q, dtype=np.float64)
-    if held.shape != (6,) or not np.all(np.isfinite(held)):
-        raise ValueError("held_hand_q must be six finite Inspire joints")
+    if held.shape != (spec.hand_dof,) or not np.all(np.isfinite(held)):
+        raise ValueError(
+            f"held_hand_q must contain {spec.hand_dof} finite {spec.name} joints")
     if held_hand_source not in {"measured", "commanded_nominal"}:
         raise ValueError("held_hand_source must be measured or commanded_nominal")
-    if (getattr(planner, "_n_arm", None) != 7 or
-            getattr(planner, "_hand", None) != "fr3_inspire" or
-            getattr(planner, "_robot_cfg", {}).get(
-                "kinematics", {}).get("ee_link") != "base_link"):
-        raise ValueError("preflight requires the original FR3/Inspire base_link planner")
     if not isinstance(trial_scene, dict) or not isinstance(
             trial_scene.get("mesh"), dict):
         raise ValueError("trial scene is missing the key/socket collision meshes")
@@ -167,9 +171,10 @@ def plan_insertion_after_pickup(
     if not _goal_met(requested_wrist, expected_wrist, limits):
         raise ValueError("pickup wrist does not match fixed key/hand grasp")
     pickup = np.asarray(pickup_plan.traj, dtype=np.float64)
-    if (pickup.ndim != 2 or pickup.shape[1] != 13 or len(pickup) < 2 or
+    if (pickup.ndim != 2 or pickup.shape[1] != spec.full_dof or len(pickup) < 2 or
             not np.all(np.isfinite(pickup))):
-        raise ValueError("AutoDex pickup has no valid 13-DOF trajectory")
+        raise ValueError(
+            f"AutoDex pickup has no valid {spec.full_dof}-DOF trajectory")
 
     # Original plan() models the grasp-pose hand for its lift, but the
     # executor may continue squeezing after grasp. Replan from the same arm
@@ -236,16 +241,13 @@ def plan_held_transfer_and_axial(
     step = float(axial_waypoint_step_m)
     if not math.isfinite(step) or not 0 < step <= 0.005:
         raise ValueError("axial waypoint step must be finite and <= 5 mm")
+    spec = _planner_end_effector(planner)
     held = np.asarray(held_hand_q, dtype=np.float64)
-    if held.shape != (6,) or not np.all(np.isfinite(held)):
-        raise ValueError("held_hand_q must be six finite Inspire joints")
+    if held.shape != (spec.hand_dof,) or not np.all(np.isfinite(held)):
+        raise ValueError(
+            f"held_hand_q must contain {spec.hand_dof} finite {spec.name} joints")
     if held_hand_source not in {"measured", "commanded_nominal"}:
         raise ValueError("held_hand_source must be measured or commanded_nominal")
-    if (getattr(planner, "_n_arm", None) != 7 or
-            getattr(planner, "_hand", None) != "fr3_inspire" or
-            getattr(planner, "_robot_cfg", {}).get(
-                "kinematics", {}).get("ee_link") != "base_link"):
-        raise ValueError("preflight requires the original FR3/Inspire base_link planner")
     frozen = calibration.collision_scene
     if (not isinstance(trial_scene, dict) or
             trial_scene.get("cuboid") != frozen.get("cuboid") or
@@ -254,9 +256,10 @@ def plan_held_transfer_and_axial(
              if name != "target"} != frozen.get("mesh")):
         raise ValueError("trial scene differs from frozen socket/table world")
     start = np.asarray(start_q, dtype=np.float64)
-    if (start.shape != (13,) or not np.all(np.isfinite(start)) or
+    if (start.shape != (spec.full_dof,) or not np.all(np.isfinite(start)) or
             not np.allclose(start[7:], held, atol=1e-4, rtol=0)):
-        raise ValueError("held transfer start must be finite 13-DOF with fixed hand")
+        raise ValueError(
+            f"held transfer start must be finite {spec.full_dof}-DOF with fixed hand")
     if lift_trajectory is not None:
         lift = np.asarray(lift_trajectory, dtype=np.float64)
         if not np.allclose(lift[-1], start, atol=1e-4, rtol=0):

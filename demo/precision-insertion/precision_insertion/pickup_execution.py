@@ -19,6 +19,7 @@ from typing import Callable
 
 import numpy as np
 
+from .end_effector import end_effector_spec
 from .live_robot_state import LiveRobotState
 from .session_runner import SessionRunner
 from .trial_preflight import TrialPreflight
@@ -86,13 +87,14 @@ def execute_bound_pickup(
     """Execute only v8 pickup through squeeze, then check measured feedback.
 
     The selected approach is required to be byte-bound to the saved trial
-    preflight and its *current* measured 13-DOF starting state. The caller
+    preflight and its *current* measured FR3/end-effector starting state. The caller
     must provide a separately commissioned hardware/intervention interlock;
     this function cannot commission a camera clock, force controller or E-stop.
     An exception after command onset leaves an exclusive failure record and
     the arm/hand for supervised recovery. No attempt label is set here.
     """
     limits.validate()
+    spec = end_effector_spec(getattr(executor, "hand_name", None))
     if (not isinstance(runner, SessionRunner) or
             runner.current_decision().action != "await_lift_observation" or
             not callable(read_post_state) or not callable(motion_interlock)):
@@ -150,7 +152,8 @@ def execute_bound_pickup(
     if (trial.pickup_plan.success is not True or
             tuple(trial.pickup_plan.scene_info) !=
             trial.selected_candidate_key or
-            planned.ndim != 2 or planned.shape[1] != 13 or len(planned) < 2 or
+            planned.ndim != 2 or planned.shape[1] != spec.full_dof or
+            len(planned) < 2 or
             not np.all(np.isfinite(planned)) or
             not np.array_equal(approach, planned) or
             not np.array_equal(pregrasp, np.asarray(
@@ -162,7 +165,9 @@ def execute_bound_pickup(
             not np.allclose(planned[0], trial.live_start_q, atol=1e-4, rtol=0)):
         raise ValueError("pickup command differs from its saved v8 plan/start")
     if not isinstance(pre_state, LiveRobotState):
-        raise TypeError("pickup requires measured FR3/Inspire feedback")
+        raise TypeError(f"pickup requires measured FR3/{spec.name} feedback")
+    if pre_state.end_effector != spec.name:
+        raise ValueError("pickup feedback end-effector differs from executor")
     pre_state.validate(
         max_arm_hand_skew_s=limits.max_arm_hand_skew_s,
         max_hand_command_error_raw=limits.max_hand_command_error_raw,
@@ -201,12 +206,15 @@ def execute_bound_pickup(
             scene_cfg=trial.trial_scene,
             skip_lift=True, start_from_current=True)
         raw = np.asarray(squeeze_action, dtype=np.float64)
-        if (raw.shape != (6,) or not np.all(np.isfinite(raw)) or
-                np.any(raw < 0) or np.any(raw > 1000)):
+        upper = 0.04 if spec.name == "franka_gripper" else 1000.0
+        if (raw.shape != (spec.hand_dof,) or not np.all(np.isfinite(raw)) or
+                np.any(raw < 0) or np.any(raw > upper)):
             raise RuntimeError("stock executor returned no valid squeeze action")
         post = read_post_state()
         if not isinstance(post, LiveRobotState):
-            raise TypeError("post-squeeze FR3/Inspire feedback is missing")
+            raise TypeError(f"post-squeeze FR3/{spec.name} feedback is missing")
+        if post.end_effector != spec.name:
+            raise RuntimeError("post-squeeze end-effector identity changed")
         post.validate(
             max_arm_hand_skew_s=limits.max_arm_hand_skew_s,
             max_hand_command_error_raw=limits.max_hand_command_error_raw,
@@ -243,7 +251,8 @@ def execute_bound_pickup(
                    "stop_acknowledgement": stop_ack,
                    "robot_state_after_failure":
                    "unknown_requires_supervised_recovery"}
-        if raw is not None and raw.shape == (6,) and np.all(np.isfinite(raw)):
+        if (raw is not None and raw.shape == (spec.hand_dof,) and
+                np.all(np.isfinite(raw))):
             failure["squeeze_action_raw"] = raw.tolist()
         if isinstance(post, LiveRobotState):
             try:

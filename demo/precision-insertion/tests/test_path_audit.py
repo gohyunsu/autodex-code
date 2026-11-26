@@ -550,9 +550,9 @@ def test_lateral_hold_rejects_vertical_detour_and_changed_hand(
     path[2, 7] = 0.01
     with pytest.raises(ValueError, match="changes Inspire joints"):
         _lateral(tmp_path, fixture, path)
-    with pytest.raises(ValueError, match="at most 1 mm"):
+    with pytest.raises(ValueError, match="at most 10 mm"):
         _lateral(tmp_path, fixture, _lateral_path(),
-                 increment_socket_xy_m=(0.002, 0.0))
+                 increment_socket_xy_m=(0.011, 0.0))
 
 
 def test_lateral_hold_has_no_initial_socket_collision_exemption(

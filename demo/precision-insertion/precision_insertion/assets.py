@@ -7,12 +7,17 @@ import os
 from pathlib import Path
 
 from .config import TaskMode
+from .end_effector import end_effector_spec
 
 
 _CURRENT_FR3_INSPIRE_URDF = (
     Path(__file__).resolve().parents[3] / "autodex" / "planner" / "src" /
     "curobo" / "content" / "assets" / "robot" /
     "fr3_inspire_description" / "fr3_inspire_oct12_mount.urdf")
+_CURRENT_FR3_GRIPPER_URDF = (
+    Path(__file__).resolve().parents[3] / "autodex" / "planner" / "src" /
+    "curobo" / "content" / "assets" / "robot" /
+    "fr3_gripper_description" / "fr3_gripper.urdf")
 
 
 def selected_fr3_inspire_urdf() -> Path:
@@ -20,6 +25,15 @@ def selected_fr3_inspire_urdf() -> Path:
     override = os.environ.get("PRECISION_FR3_INSPIRE_URDF")
     return (Path(override).expanduser().resolve()
             if override else _CURRENT_FR3_INSPIRE_URDF)
+
+
+def selected_robot_urdf() -> Path:
+    spec = end_effector_spec()
+    if spec.name == "inspire":
+        return selected_fr3_inspire_urdf()
+    override = os.environ.get("PRECISION_FR3_GRIPPER_URDF")
+    return (Path(override).expanduser().resolve()
+            if override else _CURRENT_FR3_GRIPPER_URDF)
 
 
 @dataclass(frozen=True)
@@ -69,23 +83,27 @@ class AssetPaths:
     @property
     def robot_urdf(self) -> Path:
         if self.mode.family == "cylinder" or os.environ.get(
-                "PRECISION_FR3_INSPIRE_URDF"):
-            return selected_fr3_inspire_urdf()
+                "PRECISION_FR3_INSPIRE_URDF") or os.environ.get(
+                    "PRECISION_FR3_GRIPPER_URDF"):
+            return selected_robot_urdf()
         return (self.shared_root / "AutoDex" / "content" / "assets" /
                 "robot" / "fr3_inspire_description" / "fr3_inspire.urdf")
 
     @property
     def candidate_dir(self) -> Path:
-        return (self.shared_root / "AutoDex" / "candidates" / "inspire" /
+        return (self.shared_root / "AutoDex" / "candidates" /
+                end_effector_spec().asset_namespace /
                 "v8" / self.mode.key_object)
 
     @property
     def scene_dir(self) -> Path:
-        return (self.shared_root / "AutoDex" / "scene" / "inspire" /
+        return (self.shared_root / "AutoDex" / "scene" /
+                end_effector_spec().asset_namespace /
                 self.mode.key_object / "table")
 
     def reset_dir(self, height_cm: int) -> Path:
-        return (self.shared_root / "AutoDex" / "candidates" / "inspire" /
+        return (self.shared_root / "AutoDex" / "candidates" /
+                end_effector_spec().asset_namespace /
                 f"reset_{height_cm}" / self.mode.key_object /
                 f"reorient_{height_cm}")
 
@@ -107,6 +125,7 @@ def audit_assets(shared_root: Path, mode: TaskMode) -> dict:
     consulted.
     """
     root = Path(shared_root).expanduser().resolve()
+    spec = end_effector_spec()
     paths = AssetPaths(root, mode)
     key = mode.key_object
     socket = mode.socket_object
@@ -116,7 +135,7 @@ def audit_assets(shared_root: Path, mode: TaskMode) -> dict:
         "socket_raw_mesh": paths.raw_mesh(socket),
         "socket_exact_collision_mesh": paths.socket_collision_mesh,
         "task_geometry": paths.task_geometry,
-        "franka_inspire_urdf": paths.robot_urdf,
+        "robot_urdf": paths.robot_urdf,
         "key_foundpose_repre": paths.foundpose_repre(key),
         "socket_foundpose_repre": paths.foundpose_repre(socket),
     }
@@ -134,9 +153,9 @@ def audit_assets(shared_root: Path, mode: TaskMode) -> dict:
     if not tabletop:
         missing.append("key_tabletop_poses")
     if not scenes:
-        missing.append("inspire_v8_table_scenes")
+        missing.append(f"{spec.asset_namespace}_v8_table_scenes")
     if not grasps:
-        missing.append("inspire_v8_grasp_candidates")
+        missing.append(f"{spec.asset_namespace}_v8_grasp_candidates")
     return {
         "schema": "precision_insertion_asset_audit_v1",
         "shared_root": str(root),
@@ -150,10 +169,11 @@ def audit_assets(shared_root: Path, mode: TaskMode) -> dict:
         "checks": checks,
         "counts": {
             "key_tabletop_poses": len(tabletop),
-            "inspire_v8_table_scenes": len(scenes),
-            "inspire_v8_grasp_candidates": len(grasps),
-            "inspire_v8_reset_grasps_by_height_cm": resets,
+            f"{spec.asset_namespace}_v8_table_scenes": len(scenes),
+            f"{spec.asset_namespace}_v8_grasp_candidates": len(grasps),
+            f"{spec.asset_namespace}_v8_reset_grasps_by_height_cm": resets,
         },
+        "end_effector": spec.name,
         "missing": missing,
         "file_inputs_present": not missing,
         "robot_ready": False,

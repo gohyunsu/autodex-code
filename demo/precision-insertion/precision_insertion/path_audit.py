@@ -1,7 +1,7 @@
 """Read-only sampled collision audit of a held key on planned FR3 paths.
 
 This complements, but does not replace, the unchanged cuRobo arm/world checks.
-Input trajectories must be the actual planned 13-DOF paths, not interpolated
+Input trajectories must be the actual planned FR3/end-effector paths, not interpolated
 goal poses. Sampling never proves swept-volume or force/contact safety between
 samples, and a passing report is never a robot motion authorization.
 """
@@ -23,6 +23,7 @@ from autodex.utils.conversion import cart2se3
 from autodex.utils.tabletop_geometry import table_cuboid
 
 from .assets import AssetPaths
+from .end_effector import end_effector_spec
 from .endpoint import (_coal_mesh, _coal_models_report, _hand_link_meshes,
                        _load_mesh, validate_task_geometry)
 from .geometry import pose_angle_deg, validate_se3
@@ -83,7 +84,7 @@ def _immutable_key_model(path: str):
 @lru_cache(maxsize=4)
 def _immutable_hand_models(robot_path: str, file_signature: tuple[int, int],
                            hand_q_bytes: bytes):
-    """Reuse the same held Inspire geometry across audits of one hand pose.
+    """Reuse the same held end-effector geometry across audits of one pose.
 
     The file signature invalidates the cache if a later session installs a
     revised robot/adapter URDF at the same path. Coal's BVHs are queried with
@@ -121,13 +122,18 @@ def _poses_match(actual: np.ndarray, expected: np.ndarray,
 
 def _joint_path(value: np.ndarray, name: str,
                 held_hand_q: np.ndarray) -> np.ndarray:
+    spec = end_effector_spec()
     path = np.asarray(value, dtype=np.float64)
-    if path.ndim != 2 or path.shape[1] != 13 or len(path) < 2:
-        raise ValueError(f"{name} must be a dense (N>=2, 13) FR3/Inspire path")
+    if path.ndim != 2 or path.shape[1] != spec.full_dof or len(path) < 2:
+        raise ValueError(
+            f"{name} must be a dense (N>=2, {spec.full_dof}) "
+            f"FR3/{spec.name} path")
     if not np.all(np.isfinite(path)):
         raise ValueError(f"{name} contains non-finite joints")
     if not np.allclose(path[:, 7:], held_hand_q, atol=1e-4, rtol=0):
-        raise ValueError(f"{name} changes Inspire joints while holding the key")
+        label = "Inspire" if spec.name == "inspire" else "Franka gripper"
+        raise ValueError(
+            f"{name} changes {label} joints while holding the key")
     return path
 
 
@@ -417,7 +423,7 @@ def audit_held_joint_paths(
 
     ``planner.fk_wrist(q)`` is the unchanged AutoDex planner FK; its cuRobo
     arm/world collision result must be checked independently by the caller.
-    The hand-to-key transform and six Inspire joints are fixed at all samples.
+    The hand-to-key transform and selected end-effector joints are fixed at all samples.
     A tilted socket is supported *only for checking a supplied axis-aligned
     path*; this function does not create such a path or contact controller.
     Candidate screening may stop after the first decisive geometry failure.
@@ -448,9 +454,11 @@ def audit_held_joint_paths(
             targets.socket_collision_mesh_sha256):
         raise ValueError("socket collision mesh changed since target construction")
 
+    spec = end_effector_spec()
     hand_q = np.asarray(held_hand_q, dtype=np.float64)
-    if hand_q.shape != (6,) or not np.all(np.isfinite(hand_q)):
-        raise ValueError("held_hand_q must be six finite Inspire joints")
+    if hand_q.shape != (spec.hand_dof,) or not np.all(np.isfinite(hand_q)):
+        raise ValueError(
+            f"held_hand_q must contain {spec.hand_dof} finite {spec.name} joints")
     transfer = _joint_path(transfer_trajectory, "transfer_trajectory", hand_q)
     descent = _joint_path(descent_trajectory, "descent_trajectory", hand_q)
     if not np.allclose(transfer[-1], descent[0], atol=1e-4, rtol=0):
@@ -577,7 +585,7 @@ def audit_held_joint_paths(
 
     return {
         "schema": "precision_insertion_sampled_held_path_audit_v1",
-        "scope": "sampled_full_key_and_inspire_links_vs_frozen_world",
+        "scope": f"sampled_full_key_and_{spec.name}_links_vs_frozen_world",
         "mode": {"family": mode.family, "gap_mm": mode.gap_mm},
         "sample_counts": {name: len(path) for name, path in stages.items()},
         "nominal_endpoint_metrics": endpoint_metrics,
@@ -625,7 +633,7 @@ def audit_held_lateral_path(
     max_hold_rotation_deg: float, key_surface_bound_m: float,
     hand_surface_bound_m: float,
 ) -> dict[str, Any]:
-    """Audit a planned <=1 mm hold shift, never an insertion stroke.
+    """Audit a planned <=10 mm hold shift, never an insertion stroke.
 
     Every FK sample must stay near the socket-plane segment and its original
     height/orientation. Collision and future-trial surface bounds are checked
@@ -639,11 +647,13 @@ def audit_held_lateral_path(
         raise ValueError("lateral path and future surface limits must be positive")
     increment = np.asarray(increment_socket_xy_m, dtype=np.float64)
     if (increment.shape != (2,) or not np.all(np.isfinite(increment)) or
-            not 0 < np.linalg.norm(increment) <= 0.001 + 1e-12):
-        raise ValueError("lateral increment must be nonzero and at most 1 mm")
+            not 0 < np.linalg.norm(increment) <= 0.010 + 1e-12):
+        raise ValueError("lateral increment must be nonzero and at most 10 mm")
+    spec = end_effector_spec()
     held = np.asarray(held_hand_q, dtype=np.float64)
-    if held.shape != (6,) or not np.all(np.isfinite(held)):
-        raise ValueError("held hand must have six finite Inspire joints")
+    if held.shape != (spec.hand_dof,) or not np.all(np.isfinite(held)):
+        raise ValueError(
+            f"held hand must have {spec.hand_dof} finite {spec.name} joints")
     path = _joint_path(trajectory, "lateral_trajectory", held)
     wrist = [validate_se3(planner.fk_wrist(q), name=f"lateral FK[{i}]")
              for i, q in enumerate(path)]

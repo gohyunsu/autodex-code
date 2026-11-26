@@ -22,6 +22,7 @@ from .assets import AssetPaths
 from .config import TaskMode
 from .geometry import validate_se3
 from .solid_occupancy import CylinderSocketOccupancy, SolidMeshOccupancy
+from .end_effector import end_effector_spec
 
 
 def _sha256(path: Path) -> str:
@@ -56,38 +57,49 @@ def _loaded_hand_urdf(path: str, signature: tuple[int, int]):
 
 
 def _hand_link_meshes(robot_urdf: Path, grasp_q: np.ndarray) -> dict:
-    """Evaluate Inspire visual links in the URDF's `base_link` hand frame.
+    """Evaluate mounted end-effector visual links in its hand-base frame.
 
     This narrow adapter follows the frame convention of the existing
     `scripts/precision_insertion/validate_whole_hand_contact_policy.py`
     helper, without importing that script's unrelated contact-policy and
     Open3D dependencies. `wrist_se3.npy` must therefore be T_key_hand.
     """
+    spec = end_effector_spec()
     hand_q = np.asarray(grasp_q, dtype=np.float64).reshape(-1)
-    if hand_q.shape != (6,) or not np.all(np.isfinite(hand_q)):
-        raise ValueError("Inspire grasp_pose.npy must contain six finite joints")
+    if hand_q.shape != (spec.hand_dof,) or not np.all(np.isfinite(hand_q)):
+        raise ValueError(
+            f"{spec.name} grasp pose must contain {spec.hand_dof} finite joints")
     path = Path(robot_urdf).expanduser().resolve()
     stat = path.stat()
     with _HAND_URDF_LOCK:
         robot = _loaded_hand_urdf(
             str(path), (stat.st_mtime_ns, stat.st_size))
         joints = [joint.name for joint in robot.actuated_joints]
-        if len(joints) != 13 or not all(name.startswith("fr3_") for name in joints[:7]):
-            raise ValueError("unexpected Franka/Inspire URDF joint contract")
+        if (len(joints) != spec.full_dof or
+                not all(name.startswith("fr3_") for name in joints[:7])):
+            raise ValueError(f"unexpected FR3/{spec.name} URDF joint contract")
         robot.update_cfg(dict(zip(joints, np.concatenate([np.zeros(7), hand_q]))))
-        hand_base = np.asarray(robot.get_transform("base_link", robot.base_link),
+        hand_base_name = ("base_link" if spec.name == "inspire" else
+                          "fr3_hand")
+        hand_base = np.asarray(robot.get_transform(hand_base_name, robot.base_link),
                                dtype=np.float64)
         hand_base_inverse = np.linalg.inv(hand_base)
         result = {}
         for name, mesh in robot.scene.geometry.items():
-            if not (name.startswith("base_link") or name.startswith("right_")):
+            selected = ((name.startswith("base_link") or
+                         name.startswith("right_")) if spec.name == "inspire"
+                        # yourdfpy names unnamed Franka visual nodes from the
+                        # mesh basename (hand.dae/finger.dae), not the link.
+                        else name.startswith("hand.") or
+                        name.startswith("finger."))
+            if not selected:
                 continue
             geometry_world, _ = robot.scene.graph.get(name)
             local = mesh.copy()
             local.apply_transform(hand_base_inverse @ geometry_world)
             result[name] = local
-    if not result or not any(name.startswith("right_") for name in result):
-        raise ValueError("Inspire hand visual links are missing from the URDF")
+    if not result:
+        raise ValueError(f"{spec.name} visual links are missing from the URDF")
     return result
 
 
@@ -119,6 +131,24 @@ def nominal_inspire_hold_poses(pregrasp_q: np.ndarray,
 
 # Preserve the original private helper name for existing offline tools/tests.
 _nominal_inspire_hold_poses = nominal_inspire_hold_poses
+
+
+def nominal_hold_poses(pregrasp_q: np.ndarray,
+                       grasp_q: np.ndarray) -> dict[str, np.ndarray]:
+    """End-effector-specific endpoint joint poses.
+
+    The stock gripper's force-controlled close stops on the key; its nominal
+    planner state is one half of the 30 mm key diameter at each jaw.
+    """
+    spec = end_effector_spec()
+    if spec.name == "inspire":
+        return nominal_inspire_hold_poses(pregrasp_q, grasp_q)
+    pre = np.asarray(pregrasp_q, dtype=np.float64).reshape(-1)
+    grasp = np.asarray(grasp_q, dtype=np.float64).reshape(-1)
+    if (pre.shape != (2,) or grasp.shape != (2,) or
+            not np.all(np.isfinite(pre)) or not np.all(np.isfinite(grasp))):
+        raise ValueError("Franka gripper pregrasp/grasp must have two joints")
+    return {"franka_gripper_nominal_contact": np.clip(grasp, 0.0, 0.04)}
 
 
 def _coal_mesh(mesh):
@@ -312,7 +342,7 @@ def screen_grasp_endpoint(
                   validate_se3(T_key_hand_override,
                                name="observed T_key_hand override"))
     if hand_poses_override is None:
-        hand_poses = nominal_inspire_hold_poses(
+        hand_poses = nominal_hold_poses(
             np.load(files["pregrasp_pose"], allow_pickle=False),
             np.load(files["grasp_pose"], allow_pickle=False))
     else:
@@ -321,7 +351,8 @@ def screen_grasp_endpoint(
             if not isinstance(name, str) or not name.strip():
                 raise ValueError("hand pose override names must be nonempty")
             joints = np.asarray(value, dtype=np.float64)
-            if joints.shape != (6,) or not np.all(np.isfinite(joints)):
+            if (joints.shape != (end_effector_spec().hand_dof,) or
+                    not np.all(np.isfinite(joints))):
                 raise ValueError(f"invalid hand pose override: {name}")
             hand_poses[name] = joints
     key_mesh = _load_mesh(files["key_mesh"])
@@ -358,7 +389,8 @@ def screen_grasp_endpoint(
     hand_pass = all(row["clear"] for row in hold_screens.values())
     return {
         "schema": "precision_insertion_endpoint_screen_v1",
-        "scope": "aligned_key_fit_and_whole_inspire_hand_endpoint",
+        "scope": ("aligned_key_fit_and_whole_"
+                  f"{end_effector_spec().name}_endpoint"),
         "candidate_dir": str(candidate),
         "mode": {"family": mode.family, "gap_mm": mode.gap_mm,
                  "key_object": mode.key_object,
@@ -371,7 +403,9 @@ def screen_grasp_endpoint(
         "key_socket_fit": key_fit,
         "hold_pose_screens": hold_screens,
         "hold_pose_contract": (
-            "AutoDex default Inspire squeeze_level=2; measured hardware pose must be checked online"
+            ("AutoDex default Inspire squeeze_level=2; measured hardware pose must be checked online"
+             if end_effector_spec().name == "inspire" else
+             "Franka force-controlled grasp at the planned key diameter")
             if hand_poses_override is None else
             "explicit supplied hand/key state; source authenticity is checked by the caller"),
         "hand_socket_clear_at_target": hand_pass,

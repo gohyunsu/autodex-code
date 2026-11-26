@@ -16,10 +16,14 @@ import numpy as np
 from autodex.utils.conversion import cart2se3
 from autodex.utils.robot_config import INSPIRE_INIT
 
+from .analytic_gripper import (analytic_franka_gripper_grasp,
+                               match_cylinder_tabletop_stem)
 from .candidates import planner_candidate_override, select_pose_candidates
 from .assets import AssetPaths
 from .curobo_compat import install_curobo_planner_compat
-from .endpoint import nominal_inspire_hold_poses
+from .end_effector import (full_dof_end_effector_spec,
+                           planner_end_effector_spec)
+from .endpoint import nominal_hold_poses
 from .geometry import validate_se3
 from .pose_selection import classify_key_tabletop_pose
 from .repose_preflight import (
@@ -69,11 +73,19 @@ def plan_original_pose_restoration(
     q = np.asarray(measured_start_q, dtype=float)
     timestamp = float(start_q_timestamp_s)
     capture_time = float(key_observation.selected_acquisition_timestamp_s)
-    if (q.shape != (13,) or not np.all(np.isfinite(q)) or
+    if (q.ndim != 1 or not np.all(np.isfinite(q)) or
             not math.isfinite(timestamp) or
             not math.isfinite(max_state_skew_s) or max_state_skew_s <= 0 or
             abs(timestamp - capture_time) > max_state_skew_s):
         raise ValueError("restoration needs camera-synchronized measured joints")
+    try:
+        state_spec = full_dof_end_effector_spec(len(q))
+    except ValueError as exc:
+        raise ValueError(
+            "restoration needs camera-synchronized measured joints") from exc
+    spec = planner_end_effector_spec(planner)
+    if state_spec.name != spec.name:
+        raise ValueError("restoration planner and measured end effector differ")
     scene = build_trial_scene_from_session(
         mode=mode, shared_root=shared_root, calibration=calibration,
         key_pose_world=key_observation.pose_world,
@@ -81,9 +93,18 @@ def plan_original_pose_restoration(
     observed = validate_se3(cart2se3(np.asarray(
         scene["mesh"]["target"]["pose"], dtype=float)),
         name="fresh tabletop T_robot_key")
-    source = classify_key_tabletop_pose(
-        mode=mode, shared_root=shared_root, pose_robot_key=observed,
-        max_rotation_error_deg=max_pose_error_deg)["stem"]
+    if spec.name == "franka_gripper":
+        if mode.family != "cylinder":
+            raise ValueError(
+                "deterministic Franka-gripper restoration supports cylinder mode")
+        source = match_cylinder_tabletop_stem(
+            observed,
+            tabletop_dir=AssetPaths(shared_root, mode).key_tabletop_dir,
+            table_normal_robot=np.asarray([0.0, 0.0, 1.0]))["stem"]
+    else:
+        source = classify_key_tabletop_pose(
+            mode=mode, shared_root=shared_root, pose_robot_key=observed,
+            max_rotation_error_deg=max_pose_error_deg)["stem"]
     target = str(target_pose_stem)
     common = dict(
         planner=planner, shared_root=shared_root, mode=mode,
@@ -103,7 +124,7 @@ def plan_original_pose_restoration(
         minimum_release_key_clearance_m=minimum_release_key_clearance_m,
         release_height_m=0.0,
     )
-    if source != target:
+    if spec.name == "inspire" and source != target:
         directed = preflight_v8_repose_transition(**common)
         if directed.status == "nominal_reset_preflight_pass_drop_unobserved":
             return directed, scene
@@ -134,28 +155,36 @@ def plan_original_pose_restoration(
     install_curobo_planner_compat()
     for row in rows:
         key = tuple(row["key"])
-        override = planner_candidate_override(
-            catalog=catalog, selected=[row], mode=mode,
-            session_record=calibration.record, pose_robot_key=observed,
-            tabletop_pose_stem=source)
+        analytic = None
+        if spec.name == "franka_gripper":
+            analytic = analytic_franka_gripper_grasp(
+                observed, table_normal_robot=np.asarray([0.0, 0.0, 1.0]))
+            override = analytic.candidate_override(identifier=key)
+        else:
+            override = planner_candidate_override(
+                catalog=catalog, selected=[row], mode=mode,
+                session_record=calibration.record, pose_robot_key=observed,
+                tabletop_pose_stem=source)
         planner.set_start_state(q)
         pickup = planner.plan(
-            scene, mode.key_object, "v8", hand="inspire",
+            scene, mode.key_object, "v8", hand=spec.asset_namespace,
             skip_done=False, success_only=False,
             candidate_override=override)
-        seed = {"seed_id": "/".join(key), "source": "stable_v8_grasp",
+        seed = {"seed_id": "/".join(key),
+                "source": ("analytic_franka_gripper_grasp"
+                           if analytic is not None else "stable_v8_grasp"),
                 "height_cm": release_height_cm, "cell": f"{source}_{target}"}
         if not pickup.success or pickup.lift_preflight is None:
             attempts.append({**seed, "status": "pickup_unreachable"})
             continue
         if tuple(pickup.scene_info) != key:
             raise ValueError("restoration planner selected a different v8 grasp")
-        T_key_hand = validate_se3(np.load(
-            Path(row["candidate_dir"]) / "wrist_se3.npy",
-            allow_pickle=False), name="v8 candidate T_key_hand")
-        hold_q = nominal_inspire_hold_poses(
-            pickup.pregrasp_pose, pickup.grasp_pose,
-        )["autodex_default_controller_hold"]
+        T_key_hand = (analytic.T_key_hand.copy() if analytic is not None else
+                      validate_se3(np.load(
+                          Path(row["candidate_dir"]) / "wrist_se3.npy",
+                          allow_pickle=False), name="v8 candidate T_key_hand"))
+        hold_q = next(iter(nominal_hold_poses(
+            pickup.pregrasp_pose, pickup.grasp_pose).values()))
         held = plan_repose_held_chain(
             planner=planner, pickup_plan=pickup, trial_scene=scene,
             shared_root=shared_root, calibration=calibration, mode=mode,
@@ -173,7 +202,8 @@ def plan_original_pose_restoration(
         release = plan_repose_release_exit(
             planner=planner, trial_scene=scene, shared_root=shared_root,
             calibration=calibration, mode=mode, held_plan=held,
-            release_hand_q=np.asarray(INSPIRE_INIT, dtype=float),
+            release_hand_q=(np.asarray(INSPIRE_INIT, dtype=float)
+                            if spec.name == "inspire" else spec.open_q.copy()),
             retreat_goal_arm_q=np.asarray(retreat_goal_arm_q, dtype=float),
             minimum_release_key_clearance_m=minimum_release_key_clearance_m,
             limits=limits)

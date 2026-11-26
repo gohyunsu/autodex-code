@@ -99,6 +99,16 @@ FR3_INSPIRE_LINK_TO_WRIST = np.array([
     [ 0.0,         0.0,        0.0, 1.0]
 ])
 
+# Stock Franka hand transform from measured O_T_EE / URDF fr3_link8 to the
+# mounted hand frame.  The 107 mm link7-to-link8 segment is already present in
+# both O_T_EE and the full robot URDF and must not be applied a second time.
+FR3_GRIPPER_LINK_TO_WRIST = np.array([
+    [ 0.70710678,  0.70710678, 0.0, 0.0],
+    [-0.70710678,  0.70710678, 0.0, 0.0],
+    [ 0.0,         0.0,        1.0, 0.0],
+    [ 0.0,         0.0,        0.0, 1.0]
+])
+
 # ── Defaults (allegro) ──────────────────────────────────────────────────────
 INIT_STATE = np.concatenate([XARM_INIT, ALLEGRO_INIT])
 LINK6_TO_WRIST = ALLEGRO_LINK6_TO_WRIST

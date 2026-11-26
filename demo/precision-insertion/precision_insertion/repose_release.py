@@ -24,6 +24,7 @@ from autodex.utils.conversion import se32cart
 from .assets import AssetPaths
 from .config import TaskMode
 from .endpoint import _coal_mesh, _hand_link_meshes, _load_mesh
+from .end_effector import planner_end_effector_spec
 from .geometry import pose_angle_deg, validate_se3
 from .path_audit import (
     PathAuditLimits, _array_sha256, _fixed_world_models, _held_pair_report,
@@ -117,9 +118,11 @@ def audit_repose_release_open_and_lift(
     Franka-arm/self collision remains the original planner's responsibility.
     """
     limits.validate()
+    spec = planner_end_effector_spec(planner)
     release_q = np.asarray(release_hand_q, dtype=np.float64)
-    if release_q.shape != (6,) or not np.all(np.isfinite(release_q)):
-        raise ValueError("release hand must have six finite Inspire joints")
+    if release_q.shape != (spec.hand_dof,) or not np.all(np.isfinite(release_q)):
+        raise ValueError(
+            f"release hand must have {spec.hand_dof} finite {spec.name} joints")
     clearance = float(minimum_release_key_clearance_m)
     if not math.isfinite(clearance) or clearance <= 0:
         raise ValueError("release key clearance must be positive")
@@ -275,12 +278,14 @@ def plan_repose_release_exit(
     next insertion trial or any reorientation success label.
     """
     limits.validate()
+    spec = planner_end_effector_spec(planner)
     release_q = np.asarray(release_hand_q, dtype=np.float64)
     retreat = np.asarray(retreat_goal_arm_q, dtype=np.float64)
-    if (release_q.shape != (6,) or retreat.shape != (7,) or
+    if (release_q.shape != (spec.hand_dof,) or retreat.shape != (7,) or
             not np.all(np.isfinite(release_q)) or
             not np.all(np.isfinite(retreat))):
-        raise ValueError("release hand and retreat arm must be 6/7 finite joints")
+        raise ValueError(
+            f"release hand and retreat arm must be {spec.hand_dof}/7 finite joints")
     if (held_plan.status != "sampled_held_path_pass_release_unplanned" or
             held_plan.descent_trajectory is None):
         raise ValueError("release preflight requires a passed held descent")
@@ -361,7 +366,7 @@ def plan_repose_release_exit(
     # endpoints. The executor keeps them open for this empty-hand retract.
     # Replay the exact commanded path against both key pose hypotheses.
     retract = np.asarray(retract_raw, dtype=np.float64).copy()
-    if (retract.ndim != 2 or retract.shape[1] != 13 or len(retract) < 2 or
+    if (retract.ndim != 2 or retract.shape[1] != spec.full_dof or len(retract) < 2 or
             not np.all(np.isfinite(retract))):
         raise ValueError("stock retract path is malformed")
     retract[:, 7:] = release_q

@@ -57,7 +57,13 @@ if [[ -n ${PRECISION_CANDIDATE_POLICY_PROFILE:-} ]]; then
   source "$precision_candidate_policy"
   unset precision_candidate_policy
 fi
-export PRECISION_ENDPOINT_CATALOG=${PRECISION_ENDPOINT_CATALOG:-$PRECISION_STAGE_ROOT/recipient_gap${PRECISION_GAP_MM}_endpoint_catalog_straight.json}
+if [[ ${PRECISION_END_EFFECTOR:-inspire} == franka_gripper ]]; then
+  precision_default_catalog="$PRECISION_STAGE_ROOT/recipient_gap${PRECISION_GAP_MM}_endpoint_catalog_franka_gripper.json"
+else
+  precision_default_catalog="$PRECISION_STAGE_ROOT/recipient_gap${PRECISION_GAP_MM}_endpoint_catalog_straight.json"
+fi
+export PRECISION_ENDPOINT_CATALOG=${PRECISION_ENDPOINT_CATALOG:-$precision_default_catalog}
+unset precision_default_catalog
 
 if [[ ${1:-} == --camera-only ]]; then
   shift

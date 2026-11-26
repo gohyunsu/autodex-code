@@ -1,0 +1,77 @@
+robot_cfg:
+  kinematics:
+    use_usd_kinematics: false
+    usd_path: ''
+    usd_robot_root: ''
+    isaac_usd_path: ''
+    usd_flip_joints: {}
+    usd_flip_joint_limits: []
+    urdf_path: robot/fr3_gripper_description/franka_gripper_floating.urdf
+    asset_root_path: robot/fr3_gripper_description
+    base_link: world
+    ee_link: fr3_hand
+    link_names:
+    - x_link
+    - y_link
+    - z_link
+    - rx_link
+    - ry_link
+    - fr3_hand_mount
+    - fr3_hand
+    - fr3_leftfinger
+    - fr3_rightfinger
+    collision_link_names: &id001
+    - fr3_hand
+    - fr3_leftfinger
+    - fr3_rightfinger
+    collision_spheres: spheres/fr3_gripper.yml
+    collision_sphere_buffer: 0.0
+    self_collision_ignore:
+      fr3_hand:
+      - fr3_leftfinger
+      - fr3_rightfinger
+    self_collision_buffer:
+      fr3_hand: 0.0
+      fr3_leftfinger: 0.0
+      fr3_rightfinger: 0.0
+    use_global_cumul: true
+    mesh_link_names: *id001
+    cspace:
+      joint_names:
+      - x_joint
+      - y_joint
+      - z_joint
+      - x_rotation_joint
+      - y_rotation_joint
+      - z_rotation_joint
+      - fr3_finger_joint1
+      - fr3_finger_joint2
+      retract_config:
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.04
+      - 0.04
+      cspace_distance_weight:
+      - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+      - 0.2
+      - 0.2
+      null_space_weight:
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      max_jerk: 500.0
+      max_acceleration: 15.0

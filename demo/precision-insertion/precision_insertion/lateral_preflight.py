@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import TaskMode
+from .end_effector import end_effector_spec
 from .geometry import validate_se3
 from .path_audit import PathAuditLimits, audit_held_lateral_path
 from .preflight import _goal_met, _path
@@ -63,7 +64,7 @@ def plan_lateral_hold_shift(
     max_path_deviation_m: float, max_hold_height_deviation_m: float,
     max_hold_rotation_deg: float,
 ) -> LateralHoldPreflight:
-    """Start at the measured withdrawn wrist and plan <=1 mm in socket XY.
+    """Start at the measured withdrawn wrist and plan <=10 mm in socket XY.
 
     ``expected_hold_pose`` must come from the saved, source-verified prior
     preinsert plan. This lower-level function does not admit a VLM diagnostic
@@ -74,25 +75,29 @@ def plan_lateral_hold_shift(
     bounds.validate()
     increment = np.asarray(increment_socket_xy_m, dtype=np.float64)
     if (increment.shape != (2,) or not np.all(np.isfinite(increment)) or
-            not 0 < np.linalg.norm(increment) <= 0.001 + 1e-12):
-        raise ValueError("hold shift requires nonzero socket XY <= 1 mm")
+            not 0 < np.linalg.norm(increment) <= 0.010 + 1e-12):
+        raise ValueError("hold shift requires nonzero socket XY <= 10 mm")
     if not all(math.isfinite(float(v)) and v > 0 for v in (
             max_path_deviation_m, max_hold_height_deviation_m,
             max_hold_rotation_deg)):
         raise ValueError("commissioned lateral path tolerances must be positive")
+    spec = end_effector_spec()
+    expected_link = "base_link" if spec.name == "inspire" else "fr3_hand"
     if (getattr(planner, "_n_arm", None) != 7 or
-            getattr(planner, "_hand", None) != "fr3_inspire" or
+            getattr(planner, "_hand", None) != spec.planner_hand or
             getattr(planner, "_robot_cfg", {}).get(
-                "kinematics", {}).get("ee_link") != "base_link"):
-        raise ValueError("lateral preflight requires the stock FR3/Inspire planner")
+                "kinematics", {}).get("ee_link") != expected_link):
+        raise ValueError(
+            f"lateral preflight requires the selected FR3/{spec.name} planner")
     root = Path(shared_root).expanduser().resolve()
     socket = validated_frozen_socket_pose(
         mode=mode, shared_root=root, calibration=calibration)
     held_scene = build_held_scene_from_trial(
         trial_scene=trial_scene, calibration=calibration)
     start = np.asarray(start_q, dtype=np.float64)
-    if start.shape != (13,) or not np.all(np.isfinite(start)):
-        raise ValueError("lateral preflight needs measured 13-DOF start joints")
+    if start.shape != (spec.full_dof,) or not np.all(np.isfinite(start)):
+        raise ValueError(
+            f"lateral preflight needs measured {spec.full_dof}-DOF start joints")
     held = start[7:].copy()
     relation = validate_se3(T_key_hand, name="held T_key_hand")
     wrist = validate_se3(planner.fk_wrist(start), name="measured start wrist FK")

@@ -20,6 +20,7 @@ import numpy as np
 from .candidates import select_pose_candidates, validate_catalog_session
 from .config import TaskMode
 from .endpoint import screen_grasp_endpoint
+from .end_effector import end_effector_spec
 from .geometry import validate_se3
 from .held_relation import HeldRelation, resolve_postlift_held_relation
 from .live_robot_state import LiveRobotState
@@ -29,6 +30,7 @@ from .records import AttemptRecord
 from .targets import InsertionTargets, build_rigid_insertion_targets
 from .trial_preflight import TrialPreflight, _canonical_sha256
 from .world import build_held_scene_from_trial, validated_frozen_socket_pose
+from autodex.utils.conversion import cart2se3
 
 
 @dataclass(frozen=True)
@@ -166,8 +168,11 @@ def plan_postlift_observed_transfer(
             abs(joint_time - timestamp) > skew):
         raise ValueError("post-lift key and joint samples are stale or asynchronous")
     start = np.asarray(joint_sample.full_q, dtype=np.float64)
-    if start.shape != (13,) or not np.all(np.isfinite(start)):
-        raise ValueError("post-lift FR3/Inspire state must be 13 finite joints")
+    spec = end_effector_spec(joint_sample.end_effector)
+    if start.shape != (spec.full_dof,) or not np.all(np.isfinite(start)):
+        raise ValueError(
+            f"post-lift FR3/{spec.name} state must have "
+            f"{spec.full_dof} finite joints")
     limits.validate()
     pose_world = validate_se3(key_pose_world, name="observed post-lift key pose")
     c2r = validate_se3(calibration.record.get("c2r"), name="session C2R")
@@ -176,9 +181,17 @@ def plan_postlift_observed_transfer(
     wrist_robot = validate_se3(planner.fk_wrist(start),
                                name="measured post-lift wrist FK")
     candidate_dir = Path(matches[0]["candidate_dir"]).expanduser().resolve()
-    nominal_relation = validate_se3(np.load(
-        candidate_dir / "wrist_se3.npy", allow_pickle=False),
-        name="selected v8 candidate T_key_hand")
+    if spec.name == "franka_gripper":
+        pickup_key = validate_se3(cart2se3(np.asarray(
+            trial.trial_scene["mesh"]["target"]["pose"], dtype=np.float64)),
+            name="initial analytic pickup T_robot_key")
+        nominal_relation = validate_se3(
+            np.linalg.inv(pickup_key) @ trial.pickup_plan.wrist_se3,
+            name="initial analytic T_key_hand")
+    else:
+        nominal_relation = validate_se3(np.load(
+            candidate_dir / "wrist_se3.npy", allow_pickle=False),
+            name="selected v8 candidate T_key_hand")
     relation = resolve_postlift_held_relation(
         mode=mode, shared_root=root, T_robot_key_observed=key_robot,
         T_robot_hand_measured=wrist_robot,

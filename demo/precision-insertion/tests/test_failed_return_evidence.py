@@ -28,7 +28,7 @@ def _sha(path):
 
 
 def _fixture(tmp_path, *, transfer_origin=False, stock_force=False,
-             plan_dir_name="return_plan"):
+             plan_dir_name="return_plan", end_effector="inspire"):
     attempt = "attempt_1"
     candidate = "table/0/3"
     session = "a" * 64
@@ -55,22 +55,29 @@ def _fixture(tmp_path, *, transfer_origin=False, stock_force=False,
         "attempt_id": attempt, "status": "sampled_postlift_preflight_pass",
         "session_calibration_sha256": session, "catalog_sha256": catalog,
     }), encoding="utf-8")
-    q = np.zeros(13)
-    raw = np.full(6, 500.)
-    held_hand = convert_inspire_raw(raw[None])[0]
+    if end_effector == "inspire":
+        raw = np.full(6, 500.)
+        held_hand = convert_inspire_raw(raw[None])[0]
+        open_hand = np.zeros(6)
+    else:
+        raw = np.asarray([0.015, 0.015])
+        held_hand = raw.copy()
+        open_hand = np.asarray([0.04, 0.04])
+    q = np.zeros(7 + len(held_hand))
     q[7:] = held_hand
     withdrawn_state = LiveRobotState(
         q.copy(), np.zeros(7), 4.1, 4.1, 100., 4.1,
-        raw.copy(), raw.copy(), 0., np.zeros(6))
+        raw.copy(), raw.copy(), 0., np.zeros(6),
+        end_effector=end_effector)
     mid = q.copy()
     mid[0] += .1
     low = mid.copy()
     low[0] += .1
     release_low = low.copy()
-    release_low[7:] = 0
+    release_low[7:] = open_hand
     high = release_low.copy()
     high[0] += .1
-    parked = np.r_[FR3_CLEAR_VIEW, np.zeros(6)]
+    parked = np.r_[FR3_CLEAR_VIEW, open_hand]
     held = ReposeHeldPreflight(
         "sampled_held_path_pass_release_unplanned", np.vstack([q, q]),
         np.vstack([q, mid]), np.vstack([mid, low]),
@@ -78,7 +85,7 @@ def _fixture(tmp_path, *, transfer_origin=False, stock_force=False,
     release = ReposeReleasePreflight(
         "nominal_release_exit_path_pass_drop_unobserved",
         np.vstack([release_low, high]), np.vstack([high, parked]),
-        {"sampled_clear": True}, (), np.zeros(6), parked[:7])
+        {"sampled_clear": True}, (), open_hand, parked[:7])
     report = write_failed_return_plan(
         output_dir=tmp_path / plan_dir_name, attempt_id=attempt,
         candidate_id=candidate, session_calibration_sha256=session,
@@ -133,6 +140,16 @@ def test_bound_failed_return_execution_is_admitted(tmp_path):
     assert result["release_completed_at_s"] == 7.2
     assert result["exit_completed_at_s"] == 9.2
     assert result["plan_report"]["sha256"] == _sha(report)
+
+
+def test_franka_gripper_failed_return_uses_nine_dof_and_open_width(tmp_path):
+    report, _, _, args = _fixture(tmp_path, end_effector="franka_gripper")
+    record = json.loads(report.read_text(encoding="utf-8"))
+    assert record["end_effector"] == "franka_gripper"
+    assert len(record["held_start_joint_state"]["full_q"]) == 9
+    assert record["release_plan"]["release_hand_q"] == [0.04, 0.04]
+    assert verify_failed_return_execution(**args)["plan_report"]["path"] == (
+        str(report))
 
 
 def test_stock_force_ascent_is_admitted_as_held_return_start(tmp_path):

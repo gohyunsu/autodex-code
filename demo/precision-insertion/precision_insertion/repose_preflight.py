@@ -21,6 +21,8 @@ from autodex.utils.tabletop_geometry import table_surface_z
 from .assets import AssetPaths
 from .config import TaskMode
 from .endpoint import _coal_mesh, _load_mesh
+from .end_effector import (full_dof_end_effector_spec,
+                           planner_end_effector_spec)
 from .geometry import validate_se3
 from .path_audit import (
     PathAuditLimits, _fixed_world_models, _held_pair_report,
@@ -46,6 +48,7 @@ class ReposeHeldPreflight:
     held_hand_source: str
 
     def to_record(self) -> dict:
+        spec = full_dof_end_effector_spec(7 + len(self.held_hand_q))
         return {
             "schema": "precision_insertion_repose_held_preflight_v1",
             "status": self.status,
@@ -64,6 +67,7 @@ class ReposeHeldPreflight:
             "release_height_m": self.release_height_m,
             "held_hand_q": self.held_hand_q.tolist(),
             "held_hand_source": self.held_hand_source,
+            "end_effector": spec.name,
             "sampled_held_path_audit": self.sampled_held_path_audit,
             "not_validated": [
                 "observed post-squeeze key-in-hand pose and controller tracking",
@@ -287,14 +291,11 @@ def plan_repose_held_from_state(
     rows are an audit-only hold, not a second lift or an executable path.
     """
     limits.validate()
-    if (getattr(planner, "_n_arm", None) != 7 or
-            getattr(planner, "_hand", None) != "fr3_inspire" or
-            getattr(planner, "_robot_cfg", {}).get(
-                "kinematics", {}).get("ee_link") != "base_link"):
-        raise ValueError("held return needs the original FR3/Inspire planner")
+    spec = planner_end_effector_spec(planner)
     start = np.asarray(measured_start_q, dtype=np.float64)
-    if start.shape != (13,) or not np.all(np.isfinite(start)):
-        raise ValueError("held return needs a measured finite 13-DOF state")
+    if start.shape != (spec.full_dof,) or not np.all(np.isfinite(start)):
+        raise ValueError(
+            f"held return needs a measured finite {spec.full_dof}-DOF state")
     height = float(release_height_m)
     travel = float(preplace_vertical_travel_m)
     if (not math.isfinite(height) or height < 0 or
@@ -349,16 +350,13 @@ def plan_repose_held_chain(
     any real transfer. This planner-only result never grants motor permission.
     """
     limits.validate()
-    if (getattr(planner, "_n_arm", None) != 7 or
-            getattr(planner, "_hand", None) != "fr3_inspire" or
-            getattr(planner, "_robot_cfg", {}).get(
-                "kinematics", {}).get("ee_link") != "base_link"):
-        raise ValueError("repose preflight needs the original FR3/Inspire planner")
+    spec = planner_end_effector_spec(planner)
     if held_hand_source not in {"measured", "commanded_nominal"}:
         raise ValueError("held hand source must be measured or commanded_nominal")
     held = np.asarray(held_hand_q, dtype=np.float64)
-    if held.shape != (6,) or not np.all(np.isfinite(held)):
-        raise ValueError("held_hand_q must be six finite Inspire joints")
+    if held.shape != (spec.hand_dof,) or not np.all(np.isfinite(held)):
+        raise ValueError(
+            f"held_hand_q must contain {spec.hand_dof} finite {spec.name} joints")
     height = float(release_height_m)
     travel = float(preplace_vertical_travel_m)
     lift_h = float(lift_height_m)
@@ -384,9 +382,10 @@ def plan_repose_held_chain(
             pickup_plan.traj is None):
         raise ValueError("AutoDex reset pickup did not pass approach/lift preflight")
     pickup = np.asarray(pickup_plan.traj, dtype=np.float64)
-    if (pickup.ndim != 2 or pickup.shape[1] != 13 or len(pickup) < 2 or
+    if (pickup.ndim != 2 or pickup.shape[1] != spec.full_dof or len(pickup) < 2 or
             not np.all(np.isfinite(pickup))):
-        raise ValueError("AutoDex reset pickup has no valid 13-DOF path")
+        raise ValueError(
+            f"reset pickup has no valid {spec.full_dof}-DOF path")
     requested_wrist = validate_se3(pickup_plan.wrist_se3,
                                    name="selected reset pickup wrist")
     if not _goal_met(requested_wrist, initial @ key_hand, limits):
@@ -395,10 +394,12 @@ def plan_repose_held_chain(
         if measured_start_q is None:
             raise ValueError("measured repose needs a full post-squeeze start")
         lift_start = np.asarray(measured_start_q, dtype=np.float64)
-        if (lift_start.shape != (13,) or
+        if (lift_start.shape != (spec.full_dof,) or
                 not np.all(np.isfinite(lift_start)) or
                 not np.allclose(lift_start[7:], held, atol=1e-8, rtol=0)):
-            raise ValueError("measured repose start differs from held Inspire")
+            label = ("Inspire" if spec.name == "inspire"
+                     else "Franka gripper")
+            raise ValueError(f"measured repose start differs from held {label}")
         lift_start = lift_start.copy()
     else:
         if measured_start_q is not None:

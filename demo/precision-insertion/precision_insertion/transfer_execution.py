@@ -18,6 +18,7 @@ from typing import Callable
 import numpy as np
 
 from .assets import AssetPaths
+from .end_effector import end_effector_spec
 from .franka_measured_lift import FrankaMeasuredLiftAdapter
 from .bounded_postlift import (
     BoundedPostLiftPreflight, verify_bounded_postlift_preflight,
@@ -112,6 +113,7 @@ def execute_bound_held_transfer(
             not callable(getattr(adapter, "follow_transfer", None)) or
             not callable(getattr(adapter, "stop_and_acknowledge", None))):
         raise ValueError("transfer needs a passing held replan and guarded adapter")
+    spec = end_effector_spec(pre_state.end_effector)
     _reject_known_stock_follower(adapter)
     attempt = runner.active_attempt
     plan = runner._postlift_preflight
@@ -158,14 +160,16 @@ def execute_bound_held_transfer(
         raise ValueError("saved post-lift trajectory bytes changed")
     with np.load(trajectory_file, allow_pickle=False) as archive:
         transfer = np.asarray(archive["transfer"], dtype=np.float64)
-    if (transfer.ndim != 2 or transfer.shape[1] != 13 or len(transfer) < 2 or
+    if (transfer.ndim != 2 or transfer.shape[1] != spec.full_dof or
+            len(transfer) < 2 or
             not np.all(np.isfinite(transfer)) or
             not np.array_equal(transfer, plan.planning.transfer_trajectory) or
             not np.allclose(transfer[:, 7:], plan.planning.held_hand_q,
                             atol=1e-8, rtol=0) or
             not np.allclose(transfer[:, 7:], transfer[0, 7:],
                             atol=1e-8, rtol=0)):
-        raise ValueError("saved transfer does not hold the planned Inspire grasp")
+        raise ValueError(
+            f"saved transfer does not hold the planned {spec.name} grasp")
     output = attempt_dir / "transfer_execution.json"
     started_path = attempt_dir / "transfer_started.json"
     failure_path = attempt_dir / "transfer_failure.json"

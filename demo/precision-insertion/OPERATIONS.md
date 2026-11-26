@@ -16,7 +16,7 @@ offline catalogue is not mistaken for current robot validation.
 | Four camera acquisition streams | capture4's existing ParaDex installation |
 | Namespaced exposure, SAM3 and FoundPose services | the separate capture4 adapter |
 | cuRobo, insertion state machine, SAM key-tip ROI and Qwen | this kds-Z790 PC |
-| Franka FCI streaming and Inspire control | this kds-Z790 PC |
+| Franka FCI streaming and selected Inspire/gripper control | this kds-Z790 PC |
 | Static assets and authoritative run records | `/mnt/paradex2/hyunsu/precision_insertion` |
 | Repeated-use model caches | `~/precision_insertion_project/cache/models` |
 | Full-resolution selected-view recording during a run | capture4 local disk |
@@ -51,6 +51,11 @@ python3 demo/precision-insertion/audit_source_boundary.py
 ## Before a run
 
 The robot may remain off for the first two checks.
+
+The ZeroDex profile defaults to `PRECISION_END_EFFECTOR=franka_gripper`.
+Set `PRECISION_END_EFFECTOR=inspire` on the same command to retain the original
+Inspire/BODex route.  These modes have separate URDFs, joint widths and
+candidate namespaces; selecting one never deletes or rewrites the other.
 
 ```bash
 cd /home/hyunsu/autodex-code
@@ -186,4 +191,3 @@ upload.
   `--run`/`--plan-only`.
 - Do not start a second capture4 adapter if another experiment owns its
   cameras. `check` is non-mutating; `start` is an explicit operator action.
-

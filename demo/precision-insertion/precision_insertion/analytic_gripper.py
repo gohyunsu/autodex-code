@@ -1,0 +1,214 @@
+"""Deterministic Franka-gripper grasps for the cylindrical precision key.
+
+The cylindrical key has only two tabletop pose classes: its axis is either
+approximately parallel to the support plane (``side_down``) or approximately
+normal to it (``end_down``).  A fresh measured key pose and the measured table
+normal are sufficient to construct the gripper pose; BODex sampling is not
+needed for this end effector.
+
+The returned transform is the mounted Franka hand-base pose used by cuRobo.
+It is *not* a robot command.  The normal planner still checks IK, table/world
+collision, approach and lift before execution.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+
+from .geometry import validate_se3
+
+
+KEY_AXIS_LOCAL = np.asarray([0.0, 0.0, 1.0], dtype=np.float64)
+KEY_CENTER_LOCAL_M = np.asarray([0.0, 0.0, 0.040], dtype=np.float64)
+KEY_DIAMETER_M = 0.030
+
+
+def _unit(value, *, name: str) -> np.ndarray:
+    vector = np.asarray(value, dtype=np.float64).reshape(-1)
+    if vector.shape != (3,) or not np.all(np.isfinite(vector)):
+        raise ValueError(f"{name} must be a finite three-vector")
+    norm = float(np.linalg.norm(vector))
+    if norm <= 1e-10:
+        raise ValueError(f"{name} must be non-zero")
+    return vector / norm
+
+
+def _canonical_sign(axis: np.ndarray, normal: np.ndarray) -> np.ndarray:
+    """Choose one representative of the cylinder's end-exchange symmetry."""
+    # Prefer the table +X direction, then +Y.  The fallback is deterministic
+    # and changes no physical grasp because the two ends are symmetry-related.
+    for reference in (np.asarray([1.0, 0.0, 0.0]),
+                      np.asarray([0.0, 1.0, 0.0])):
+        tangent = reference - normal * float(np.dot(reference, normal))
+        if np.linalg.norm(tangent) > 1e-8:
+            tangent = tangent / np.linalg.norm(tangent)
+            return axis if float(np.dot(axis, tangent)) >= 0.0 else -axis
+    return axis
+
+
+@dataclass(frozen=True)
+class AnalyticGripperGrasp:
+    tabletop_class: str
+    T_robot_hand: np.ndarray
+    T_robot_pregrasp: np.ndarray
+    T_key_hand: np.ndarray
+    key_axis_robot: np.ndarray
+    table_normal_robot: np.ndarray
+    pregrasp_q: np.ndarray
+    grasp_q: np.ndarray
+
+    def candidate_override(self, *, identifier: tuple[str, str, str]) -> tuple:
+        """Return the explicit-candidate tuple accepted by ``GraspPlanner``."""
+        return (
+            self.T_robot_hand[None, ...].copy(),
+            self.pregrasp_q[None, ...].astype(np.float32),
+            self.grasp_q[None, ...].astype(np.float32),
+            [tuple(identifier)],
+            [self.pregrasp_q.copy()],
+        )
+
+
+def classify_cylinder_tabletop(
+    T_robot_key: np.ndarray,
+    *,
+    table_normal_robot: np.ndarray,
+) -> str:
+    """Choose the nearer of the only two D-infinity tabletop classes.
+
+    This intentionally has no confidence/failure threshold: every measured
+    axis is assigned to the nearer class, as required by the runtime policy.
+    """
+    key = validate_se3(T_robot_key, name="measured T_robot_key")
+    normal = _unit(table_normal_robot, name="table normal")
+    axis = _unit(key[:3, :3] @ KEY_AXIS_LOCAL, name="measured key axis")
+    alignment = abs(float(np.dot(axis, normal)))
+    return "end_down" if alignment >= np.sqrt(0.5) else "side_down"
+
+
+def match_cylinder_tabletop_stem(
+    T_robot_key: np.ndarray,
+    *,
+    tabletop_dir: Path,
+    table_normal_robot: np.ndarray,
+) -> dict:
+    """Map the analytic lying/standing class to an existing AutoDex stem.
+
+    The class decision deliberately has no rejection threshold.  Existing
+    tabletop NPY files are used only as stable scene/catalog identifiers; the
+    live measured pose, not the template transform, drives the grasp.
+    """
+    pose = validate_se3(T_robot_key, name="measured T_robot_key")
+    normal = _unit(table_normal_robot, name="table normal")
+    observed_axis = _unit(pose[:3, :3] @ KEY_AXIS_LOCAL,
+                          name="measured key axis")
+    tabletop_class = classify_cylinder_tabletop(
+        pose, table_normal_robot=normal)
+    rows = []
+    for path in sorted(Path(tabletop_dir).glob("*.npy")):
+        template = validate_se3(np.load(path, allow_pickle=False),
+                                name=f"tabletop template {path.stem}")
+        if classify_cylinder_tabletop(
+                template, table_normal_robot=normal) != tabletop_class:
+            continue
+        template_axis = _unit(template[:3, :3] @ KEY_AXIS_LOCAL,
+                              name=f"tabletop axis {path.stem}")
+        error = float(np.degrees(np.arccos(np.clip(
+            abs(float(np.dot(observed_axis, template_axis))), -1.0, 1.0))))
+        rows.append((error, path.stem))
+    if not rows:
+        raise FileNotFoundError(
+            f"no tabletop asset represents analytic class {tabletop_class}")
+    error, stem = min(rows)
+    return {
+        "schema": "precision_insertion_tabletop_class_v1",
+        "stem": stem,
+        "tabletop_class": tabletop_class,
+        "rotation_error_deg": error,
+        "max_rotation_error_deg": None,
+        "method": "franka_gripper_cylinder_nearest_axis_class",
+        "source": "fresh_key_pose_used_directly_template_is_identifier_only",
+    }
+
+
+def analytic_franka_gripper_grasp(
+    T_robot_key: np.ndarray,
+    *,
+    table_normal_robot: np.ndarray,
+    robot_base_position_robot: np.ndarray = np.zeros(3),
+    palm_to_key_center_m: float = 0.1034,
+    pregrasp_clearance_m: float = 0.080,
+) -> AnalyticGripperGrasp:
+    """Construct the fixed grasp for a lying or standing cylindrical key.
+
+    ``hand z`` is the approach direction from the palm toward the key and
+    ``hand y`` is the Franka jaw-closing direction.  For a lying key the
+    approach is top-down.  For a standing key it is horizontal and selected
+    on the side away from the robot base, giving a deterministic reachable
+    representative of the cylinder's free axial yaw.
+    """
+    key = validate_se3(T_robot_key, name="measured T_robot_key")
+    normal = _unit(table_normal_robot, name="table normal")
+    base = np.asarray(robot_base_position_robot, dtype=np.float64).reshape(-1)
+    if base.shape != (3,) or not np.all(np.isfinite(base)):
+        raise ValueError("robot base position must be a finite three-vector")
+    for value, name in ((palm_to_key_center_m, "palm-to-key-center"),
+                        (pregrasp_clearance_m, "pregrasp clearance")):
+        if not np.isfinite(value) or value <= 0.0:
+            raise ValueError(f"{name} must be positive and finite")
+
+    observed_axis = _unit(key[:3, :3] @ KEY_AXIS_LOCAL,
+                          name="measured key axis")
+    key_center = key[:3, :3] @ KEY_CENTER_LOCAL_M + key[:3, 3]
+    tabletop_class = classify_cylinder_tabletop(
+        key, table_normal_robot=normal)
+
+    if tabletop_class == "side_down":
+        # Drop the small measured tilt from the grasp gauge: the cylinder is
+        # supported by the table and its D-infinity roll is unobservable.
+        axis = observed_axis - normal * float(np.dot(observed_axis, normal))
+        axis = _canonical_sign(_unit(axis, name="table-parallel key axis"),
+                               normal)
+        hand_x = axis
+        hand_z = -normal
+    else:
+        hand_x = (observed_axis if float(np.dot(observed_axis, normal)) >= 0.0
+                  else -observed_axis)
+        hand_x = _unit(hand_x, name="upright key axis")
+        radial = key_center - base
+        radial = radial - normal * float(np.dot(radial, normal))
+        if np.linalg.norm(radial) <= 1e-8:
+            radial = np.asarray([1.0, 0.0, 0.0])
+            radial = radial - normal * float(np.dot(radial, normal))
+            if np.linalg.norm(radial) <= 1e-8:
+                radial = np.asarray([0.0, 1.0, 0.0])
+                radial = radial - normal * float(np.dot(radial, normal))
+        outward = _unit(radial, name="horizontal gripper side")
+        hand_z = -outward
+
+    hand_y = _unit(np.cross(hand_z, hand_x), name="jaw-closing axis")
+    # Re-orthogonalize after using the measured upright axis.
+    hand_x = _unit(np.cross(hand_y, hand_z), name="gripper longitudinal axis")
+    rotation = np.column_stack((hand_x, hand_y, hand_z))
+    if np.linalg.det(rotation) < 0.0:
+        raise ValueError("analytic gripper frame is left-handed")
+
+    hand = np.eye(4, dtype=np.float64)
+    hand[:3, :3] = rotation
+    hand[:3, 3] = key_center - hand_z * float(palm_to_key_center_m)
+    pregrasp = hand.copy()
+    pregrasp[:3, 3] -= hand_z * float(pregrasp_clearance_m)
+    key_hand = np.linalg.inv(key) @ hand
+    validate_se3(key_hand, name="analytic T_key_hand")
+    return AnalyticGripperGrasp(
+        tabletop_class=tabletop_class,
+        T_robot_hand=hand,
+        T_robot_pregrasp=pregrasp,
+        T_key_hand=key_hand,
+        key_axis_robot=hand_x,
+        table_normal_robot=normal,
+        pregrasp_q=np.asarray([0.04, 0.04], dtype=np.float64),
+        grasp_q=np.asarray([KEY_DIAMETER_M / 2.0] * 2, dtype=np.float64),
+    )

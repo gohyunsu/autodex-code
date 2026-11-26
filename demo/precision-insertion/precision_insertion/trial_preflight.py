@@ -20,11 +20,15 @@ import numpy as np
 
 from autodex.utils.conversion import cart2se3
 
+from .analytic_gripper import (analytic_franka_gripper_grasp,
+                               match_cylinder_tabletop_stem)
+from .assets import AssetPaths
 from .candidates import (planner_candidate_override, select_pose_candidates,
                          validate_catalog_session)
 from .curobo_compat import install_curobo_planner_compat
 from .config import TaskMode
-from .endpoint import nominal_inspire_hold_poses
+from .end_effector import end_effector_spec
+from .endpoint import nominal_hold_poses
 from .geometry import validate_se3
 from .key_perception import KeyPoseObservation
 from .next_trial_xy import compensated_key_hand_relation
@@ -117,8 +121,10 @@ def _rejected_path_summary(trial: InsertionPreflight, *, planner,
     if (path is not None and type(sample) is int and
             0 <= sample < len(path)):
         q = np.asarray(path[sample], dtype=float)
-        if q.shape != (13,) or not np.all(np.isfinite(q)):
-            raise ValueError("rejected path sample lacks finite 13-DOF state")
+        expected_dof = 7 + len(trial.held_hand_q)
+        if q.shape != (expected_dof,) or not np.all(np.isfinite(q)):
+            raise ValueError(
+                f"rejected path sample lacks finite {expected_dof}-DOF state")
         wrist = validate_se3(planner.fk_wrist(q), name="failed wrist FK")
         key = validate_se3(
             wrist @ np.linalg.inv(targets.T_key_hand),
@@ -245,7 +251,9 @@ def write_trial_preflight_artifacts(
         pregrasp = np.asarray(pickup.pregrasp_pose, dtype=np.float64)
         grasp = np.asarray(pickup.grasp_pose, dtype=np.float64)
         wrist = np.asarray(pickup.wrist_se3, dtype=np.float64)
-        if (pregrasp.shape != (6,) or grasp.shape != (6,) or
+        spec = end_effector_spec()
+        if (pregrasp.shape != (spec.hand_dof,) or
+                grasp.shape != (spec.hand_dof,) or
                 wrist.shape != (4, 4) or
                 not all(np.all(np.isfinite(array)) for array in
                         (pregrasp, grasp, wrist))):
@@ -335,9 +343,12 @@ def plan_fresh_key_trial(
             skew_limit <= 0 or state_time <= last_socket_time or
             abs(state_time - timestamp) > skew_limit):
         raise ValueError("start joints and key exposure are not time-aligned")
+    spec = end_effector_spec()
     start = np.asarray(live_start_q, dtype=np.float64)
-    if start.shape != (13,) or not np.all(np.isfinite(start)):
-        raise ValueError("live FR3/Inspire start state must be 13 finite joints")
+    if start.shape != (spec.full_dof,) or not np.all(np.isfinite(start)):
+        raise ValueError(
+            f"live FR3/{spec.name} start state must contain "
+            f"{spec.full_dof} finite joints")
     if max_candidate_attempts is not None and max_candidate_attempts < 1:
         raise ValueError("max_candidate_attempts must be positive")
     if type(upright_cylinder_only) is not bool:
@@ -366,10 +377,22 @@ def plan_fresh_key_trial(
     pose_robot = validate_se3(cart2se3(np.asarray(
         scene["mesh"]["target"]["pose"], dtype=float)),
         name="fresh trial T_robot_key")
+    analytic_grasp = None
     with timed("planning.pose_classification", phase="planning"):
-        pose_class = classify_key_tabletop_pose(
-            mode=mode, shared_root=root, pose_robot_key=pose_robot,
-            max_rotation_error_deg=max_pose_error_deg)
+        if spec.name == "franka_gripper":
+            if mode.family != "cylinder":
+                raise ValueError(
+                    "the deterministic Franka-gripper runtime currently "
+                    "supports the cylindrical key mode")
+            pose_class = match_cylinder_tabletop_stem(
+                pose_robot, tabletop_dir=AssetPaths(root, mode).key_tabletop_dir,
+                table_normal_robot=np.asarray([0.0, 0.0, 1.0]))
+            analytic_grasp = analytic_franka_gripper_grasp(
+                pose_robot, table_normal_robot=np.asarray([0.0, 0.0, 1.0]))
+        else:
+            pose_class = classify_key_tabletop_pose(
+                mode=mode, shared_root=root, pose_robot_key=pose_robot,
+                max_rotation_error_deg=max_pose_error_deg)
     stem = pose_class["stem"]
     with timed("planning.catalog_select", phase="planning", kind="io",
                tabletop_pose_stem=stem):
@@ -440,10 +463,14 @@ def plan_fresh_key_trial(
             candidate_id = "/".join(key)
             with timed("planning.candidate_load", phase="planning", kind="io",
                        candidate_id=candidate_id):
-                override = planner_candidate_override(
-                    catalog=catalog, selected=[candidate], mode=mode,
-                    session_record=calibration.record, pose_robot_key=pose_robot,
-                    tabletop_pose_stem=stem)
+                if analytic_grasp is not None:
+                    override = analytic_grasp.candidate_override(identifier=key)
+                else:
+                    override = planner_candidate_override(
+                        catalog=catalog, selected=[candidate], mode=mode,
+                        session_record=calibration.record,
+                        pose_robot_key=pose_robot,
+                        tabletop_pose_stem=stem)
             if len(override[0]) != 1 or tuple(override[3][0]) != key:
                 raise ValueError("v8 loader did not return exactly the selected grasp")
             install_curobo_planner_compat()
@@ -451,7 +478,7 @@ def plan_fresh_key_trial(
             with timed("planning.v8_pickup", phase="planning", kind="planning",
                        candidate_id=candidate_id):
                 pickup = planner.plan(
-                    scene, mode.key_object, "v8", hand="inspire",
+                    scene, mode.key_object, "v8", hand=spec.asset_namespace,
                     skip_done=False, success_only=False,
                     candidate_override=override)
             row = {"key": list(key), "pickup_preflight_pass": bool(pickup.success),
@@ -462,9 +489,11 @@ def plan_fresh_key_trial(
                 continue
             if tuple(pickup.scene_info) != key:
                 raise ValueError("AutoDex selected a grasp outside the one-grasp override")
-            hand_in_key = validate_se3(np.load(
-                Path(candidate["candidate_dir"]) / "wrist_se3.npy",
-                allow_pickle=False), name="v8 T_key_hand")
+            hand_in_key = (analytic_grasp.T_key_hand.copy()
+                           if analytic_grasp is not None else
+                           validate_se3(np.load(
+                               Path(candidate["candidate_dir"]) / "wrist_se3.npy",
+                               allow_pickle=False), name="v8 T_key_hand"))
             pickup_hand_in_key = hand_in_key.copy()
             correction = (tuple(map(float, retry_correction))
                           if key == retry_candidate and stem == retry_pose_stem
@@ -476,9 +505,9 @@ def plan_fresh_key_trial(
             targets = build_rigid_insertion_targets(
                 mode=mode, shared_root=root, calibration=calibration,
                 T_key_hand=hand_in_key)
-            hold = nominal_inspire_hold_poses(
-                pickup.pregrasp_pose, pickup.grasp_pose,
-            )["autodex_default_controller_hold"]
+            hold_options = nominal_hold_poses(
+                pickup.pregrasp_pose, pickup.grasp_pose)
+            hold = next(iter(hold_options.values()))
             with timed("planning.nominal_insertion", phase="planning",
                        kind="planning", candidate_id=candidate_id):
                 trial = plan_insertion_after_pickup(

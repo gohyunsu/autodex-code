@@ -1,8 +1,8 @@
-"""Project *predicted* Franka/Inspire, held key and fixed socket together.
+"""Project *predicted* Franka/end effector, held key and socket together.
 
 This adapts AutoDex's existing depth-tested RobotOverlayRenderer; it does not
 copy a rasterizer or infer the actual key pose from its own overlay. The robot
-uses measured 13-DOF joints. The key pose comes from an explicitly identified
+uses the selected end effector's measured joints. The key pose comes from an explicitly identified
 key/hand hypothesis, and must not be called an observation. Camera images and
 calibration must already have passed the session's provenance checks.
 """
@@ -21,6 +21,7 @@ from PIL import Image
 from .assets import AssetPaths
 from .config import TaskMode
 from .endpoint import _load_mesh
+from .end_effector import full_dof_end_effector_spec
 from .frame_provenance import image_sha256
 from .geometry import validate_se3
 from .observer import HeldSceneView
@@ -128,8 +129,9 @@ def build_raw_held_scene_comparison(
     if relation_source not in _RELATION_SOURCES:
         raise ValueError("held-key relation source must be explicit")
     q = np.asarray(full_q_measured, dtype=np.float64)
-    if q.shape != (13,) or not np.all(np.isfinite(q)):
-        raise ValueError("raw held scene needs 13 finite measured joints")
+    if q.ndim != 1 or not np.all(np.isfinite(q)):
+        raise ValueError("raw held scene needs finite measured joints")
+    spec = full_dof_end_effector_spec(len(q))
     if set(frames_bgr) != set(frame_timestamps_s) or not frames_bgr:
         raise ValueError("raw held scene needs matching camera frames and times")
     T_socket = validate_se3(T_robot_socket_frozen, name="frozen T_robot_socket")
@@ -144,10 +146,13 @@ def build_raw_held_scene_comparison(
         robot = robot_loader(AssetPaths(
             Path(shared_root).expanduser().resolve(), mode).robot_urdf)
     joints = [joint.name for joint in robot.actuated_joints]
-    if len(joints) != 13 or not all(name.startswith("fr3_") for name in joints[:7]):
-        raise ValueError("raw held scene needs the FR3/Inspire 13-joint model")
+    if (len(joints) != spec.full_dof or
+            not all(name.startswith("fr3_") for name in joints[:7])):
+        raise ValueError(
+            f"raw held scene needs the FR3/{spec.name} joint model")
     robot.update_cfg(dict(zip(joints, q)))
-    hand = validate_se3(robot.get_transform("base_link", robot.base_link),
+    hand_link = "base_link" if spec.name == "inspire" else "fr3_hand"
+    hand = validate_se3(robot.get_transform(hand_link, robot.base_link),
                         name="measured-joint URDF hand FK")
     key = validate_se3(hand @ np.linalg.inv(T_key_hand),
                        name="predicted held key pose")
@@ -200,7 +205,7 @@ def build_held_scene_prediction(
 ) -> HeldScenePrediction:
     """Assemble exact available visual meshes in the FR3 robot-base frame.
 
-    The caller must verify that the 13 joints are real feedback and that the
+    The caller must verify that the selected joints are real feedback and that the
     key/hand hypothesis belongs to this grasp. A squeeze command alone is
     deliberately distinguished from an observed or physically calibrated
     relation by ``relation_source``. This function does no robot/camera I/O.
@@ -208,19 +213,22 @@ def build_held_scene_prediction(
     if relation_source not in _RELATION_SOURCES:
         raise ValueError("held-key relation source must be explicit")
     q = np.asarray(full_q_measured, dtype=np.float64)
-    if q.shape != (13,) or not np.all(np.isfinite(q)):
-        raise ValueError("overlay needs 13 finite measured FR3/Inspire joints")
+    if q.ndim != 1 or not np.all(np.isfinite(q)):
+        raise ValueError("overlay needs finite measured FR3 joints")
+    spec = full_dof_end_effector_spec(len(q))
     T_socket = validate_se3(T_robot_socket_frozen, name="frozen T_robot_socket")
     T_key_hand = validate_se3(T_key_hand_hypothesis,
                               name="hypothesized T_key_hand")
     paths = AssetPaths(Path(shared_root).expanduser().resolve(), mode)
     robot = robot_loader(paths.robot_urdf)
     joints = [joint.name for joint in robot.actuated_joints]
-    if (len(joints) != 13 or
+    if (len(joints) != spec.full_dof or
             not all(name.startswith("fr3_") for name in joints[:7])):
-        raise ValueError("overlay URDF is not the FR3/Inspire 13-joint model")
+        raise ValueError(
+            f"overlay URDF is not the FR3/{spec.name} joint model")
     robot.update_cfg(dict(zip(joints, q)))
-    hand = validate_se3(robot.get_transform("base_link", robot.base_link),
+    hand_link = "base_link" if spec.name == "inspire" else "fr3_hand"
+    hand = validate_se3(robot.get_transform(hand_link, robot.base_link),
                         name="measured-joint URDF hand FK")
     key = validate_se3(hand @ np.linalg.inv(T_key_hand),
                        name="predicted held key pose")
@@ -238,9 +246,14 @@ def build_held_scene_prediction(
         meshes.append(scene.geometry[name])
         poses.append(_visual_affine(transform, name=f"URDF visual {name}"))
         labels[name] = _finger_label(name)
-    if (not names or not any(name.startswith("fr3_") for name in names) or
-            not any(name.startswith("right_") for name in names)):
-        raise ValueError("full Franka and Inspire visual meshes are required")
+    has_end_effector = (
+        any(name.startswith("right_") for name in names)
+        if spec.name == "inspire" else
+        (any("hand.dae" in name for name in names) and
+         any("finger.dae" in name for name in names)))
+    if not names or not has_end_effector:
+        raise ValueError(
+            f"full Franka and {spec.name} visual meshes are required")
     names.extend(("predicted_key", "frozen_socket"))
     meshes.extend((_load_mesh(paths.raw_mesh(mode.key_object)),
                    _load_mesh(paths.raw_mesh(mode.socket_object))))

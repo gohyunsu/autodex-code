@@ -22,9 +22,9 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _bundle(tmp_path: Path) -> tuple[Path, dict, dict]:
-    start = np.zeros(13)
-    held = np.full(6, .2)
+def _bundle(tmp_path: Path, *, hand_dof: int = 6) -> tuple[Path, dict, dict]:
+    start = np.zeros(7 + hand_dof)
+    held = np.full(hand_dof, .2 if hand_dof == 6 else .015)
     pickup = np.stack([start, start.copy()])
     pickup[-1, 0] = .1
     lift = np.stack([pickup[-1].copy(), pickup[-1].copy()])
@@ -36,7 +36,7 @@ def _bundle(tmp_path: Path) -> tuple[Path, dict, dict]:
     axial[-1, 2] += .01
     arrays = {
         "pickup_approach": pickup,
-        "pickup_pregrasp": np.zeros(6),
+        "pickup_pregrasp": np.zeros(hand_dof),
         "pickup_grasp": held.copy(),
         "pickup_wrist": np.eye(4),
         "held_lift": lift,
@@ -94,6 +94,13 @@ def test_saved_passing_preflight_verifies_fixed_hand_and_boundaries(tmp_path):
     assert verified["sample_counts"]["axial"] == 2
     assert verified["maximum_held_hand_drift_rad"] == 0
     assert verified["robot_ready"] is False
+
+
+def test_saved_franka_gripper_preflight_verifies_nine_dof_bundle(tmp_path):
+    report_path, _report, _arrays = _bundle(tmp_path, hand_dof=2)
+    verified = verify_saved_passing_trial(report_path)
+    assert verified["end_effector"] == "franka_gripper"
+    assert verified["maximum_held_hand_drift_rad"] == 0
 
 
 def test_saved_preflight_rejects_mutated_npz_and_path_traversal(tmp_path):

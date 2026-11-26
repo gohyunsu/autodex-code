@@ -23,6 +23,7 @@ from autodex.utils.conversion import cart2se3
 from .assets import AssetPaths
 from .config import TaskMode, select_mode
 from .geometry import validate_se3
+from .end_effector import end_effector_spec
 from .square_promotion import SCHEMA as SQUARE_PROMOTION_SCHEMA, SOURCE_FILES as SQUARE_SOURCE_FILES
 from .square_stock_promotion import (
     SCHEMA as SQUARE_STOCK_SCHEMA,
@@ -68,7 +69,8 @@ def _candidate_dirs(root: Path) -> list[Path]:
 def _scene_pose(shared_root: Path, mode: TaskMode,
                 candidate: Path) -> tuple[str, Path]:
     key = mode.key_object
-    scene = (shared_root / "AutoDex" / "scene" / "inspire" / key /
+    scene = (shared_root / "AutoDex" / "scene" /
+             end_effector_spec().asset_namespace / key /
              candidate.parent.parent.name / f"{candidate.parent.name}.json")
     scene_record = _json(scene)
     meta = scene_record.get("meta")
@@ -111,6 +113,29 @@ def _scene_pose(shared_root: Path, mode: TaskMode,
 
 
 def _grasp_evidence(candidate: Path, key_mesh: Path) -> tuple[bool, str]:
+    spec = end_effector_spec()
+    if spec.name == "franka_gripper":
+        required = ("wrist_se3.npy", "pregrasp_pose.npy", "grasp_pose.npy",
+                    "analytic_grasp.json")
+        missing = [name for name in required if not (candidate / name).is_file()]
+        if missing:
+            return False, "missing:" + ",".join(missing)
+        try:
+            validate_se3(np.load(candidate / "wrist_se3.npy", allow_pickle=False),
+                         name="analytic T_key_hand")
+            for name in ("pregrasp_pose.npy", "grasp_pose.npy"):
+                joints = np.asarray(np.load(candidate / name, allow_pickle=False))
+                if joints.shape != (2,) or not np.all(np.isfinite(joints)):
+                    return False, f"invalid:{name}"
+            record = _json(candidate / "analytic_grasp.json")
+            if (record.get("schema") !=
+                    "precision_insertion_franka_gripper_analytic_grasp_v1" or
+                    record.get("key_object") != "precision_key_cylinder_r15_h80" or
+                    record.get("gripper") != "franka_stock_parallel_gripper"):
+                return False, "invalid_analytic_grasp_contract"
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return False, f"invalid_gripper_grasp_evidence:{exc}"
+        return True, "analytic_parallel_jaw_geometry_not_physical"
     required = ("wrist_se3.npy", "pregrasp_pose.npy", "grasp_pose.npy",
                 "sim_eval.json", "simulation_validation.json")
     missing = [name for name in required if not (candidate / name).is_file()]
@@ -270,6 +295,14 @@ def build_endpoint_catalog(
                 "sim_traj": candidate / "sim_traj.json",
                 "coll_valid": candidate / "coll_valid.npy",
             }
+            if end_effector_spec().name == "franka_gripper":
+                grasp_inputs = {
+                    "key_planning_mesh": paths.key_planning_mesh,
+                    "wrist_se3": candidate / "wrist_se3.npy",
+                    "pregrasp_pose": candidate / "pregrasp_pose.npy",
+                    "grasp_pose": candidate / "grasp_pose.npy",
+                    "analytic_grasp": candidate / "analytic_grasp.json",
+                }
             if (candidate / "nominal_endpoint_screen.json").is_file():
                 grasp_inputs.update({
                     "nominal_endpoint_screen": (
@@ -294,7 +327,9 @@ def build_endpoint_catalog(
             row["grasp_stability_pass"] = passed
             row["grasp_stability_reason"] = reason
             if passed:
-                validation = _json(candidate / "simulation_validation.json")
+                validation = (_json(candidate / "simulation_validation.json")
+                              if (candidate / "simulation_validation.json").is_file()
+                              else {})
                 if (validation.get("schema") ==
                         "precision_insertion_cylinder_tabletop_simulation_v1"):
                     row["simulated_post_squeeze_fidelity_diagnostic"] = (
@@ -334,9 +369,12 @@ def build_endpoint_catalog(
         "errors": errors,
         "candidates": rows,
         "eligible_count": sum(row["eligible"] for row in rows),
+        "end_effector": end_effector_spec().name,
         "not_validated": [
-            "nominal BODex key-in-hand relation after physical squeeze/lift; "
-            "MuJoCo drift is diagnostic and not an acceptance threshold",
+            ("nominal BODex key-in-hand relation after physical squeeze/lift; "
+             "MuJoCo drift is diagnostic and not an acceptance threshold"
+             if end_effector_spec().name == "inspire" else
+             "physical parallel-jaw contact, friction, and lift stability"),
             "live pose-conditioned Franka IK or full transfer/insertion paths",
             "guarded contact, release, reset, or reorientation",
             "physical grasp or insertion success",
@@ -565,7 +603,8 @@ def planner_candidate_override(
         held = np.asarray(np.load(
             candidate / "grasp_pose.npy", allow_pickle=False),
             dtype=np.float64)
-        if (pre.shape != (6,) or held.shape != (6,) or
+        hand_dof = end_effector_spec().hand_dof
+        if (pre.shape != (hand_dof,) or held.shape != (hand_dof,) or
                 not np.all(np.isfinite(pre)) or
                 not np.all(np.isfinite(held))):
             raise ValueError(f"selected v8 grasp has invalid hand joints: {candidate}")
@@ -581,7 +620,7 @@ def planner_candidate_override(
         candidate = Path(row["candidate_dir"])
         path = candidate / f"openpose_{tabletop_pose_stem}.npy"
         value = np.load(path, allow_pickle=False) if path.is_file() else None
-        if value is not None and (value.shape != (6,) or
+        if value is not None and (value.shape != (hand_dof,) or
                                   not np.all(np.isfinite(value))):
             raise ValueError(f"invalid candidate openpose: {path}")
         openposes.append(value)

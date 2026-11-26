@@ -21,6 +21,7 @@ from uuid import uuid4
 
 import numpy as np
 
+from .end_effector import (end_effector_spec, hand_q_from_gripper_width)
 from .franka_completion_checked import is_demo_completion_checked_executor
 
 
@@ -50,13 +51,14 @@ class _ObservedArm:
 
     def __init__(self, arm, hand, *, expected_hand_raw: np.ndarray,
                  limits: MeasuredLiftMonitorLimits, deadline: float,
-                 stage: str):
+                 stage: str, end_effector: str):
         self.arm = arm
         self.hand = hand
         self.expected_hand_raw = expected_hand_raw
         self.limits = limits
         self.deadline = deadline
         self.stage = stage
+        self.spec = end_effector_spec(end_effector)
         self.owner_ident = threading.get_ident()
         self.samples: list[dict] = []
         self._last_uptime: float | None = None
@@ -90,27 +92,40 @@ class _ObservedArm:
               self.limits.max_state_gap_s):
             raise RuntimeError(
                 f"FR3 {self.stage} state stream stopped advancing")
-        hand_state = self.hand.get_data()
+        hand_state = state if self.spec.name == "franka_gripper" else self.hand.get_data()
         if not isinstance(hand_state, dict):
-            raise RuntimeError(f"Inspire {self.stage} state stream is absent")
-        raw = np.asarray(hand_state.get("qpos"), dtype=np.float64)
-        if raw.shape != (6,) or not np.all(np.isfinite(raw)):
+            raise RuntimeError(
+                f"{self.spec.name} {self.stage} state stream is absent")
+        raw = (hand_q_from_gripper_width(float(
+            hand_state.get("gripper_width", np.nan)))
+               if self.spec.name == "franka_gripper" else
+               np.asarray(hand_state.get("qpos"), dtype=np.float64))
+        if (raw.shape != (self.spec.hand_dof,) or
+                not np.all(np.isfinite(raw))):
             # One failed Modbus reply does not erase the preceding measured
             # sample. Keep monitoring FR3 and wait for the next hand reply,
             # using the existing state-gap limit for both streams.
             if now_monotonic - self._last_hand_sample_monotonic <= \
                     self.limits.max_state_gap_s:
                 return state
-            raise RuntimeError(f"Inspire {self.stage} state stream stopped advancing")
+            raise RuntimeError(
+                f"{self.spec.name} {self.stage} state stream stopped advancing")
         measured = raw
         self._last_hand_sample_monotonic = now_monotonic
-        commanded = _vector(hand_state.get("action"), 6,
-                            "commanded Inspire joints")
-        hand_time = float(hand_state.get("time", float("nan")))
+        if self.spec.name == "franka_gripper":
+            commanded = measured.copy()
+            hand_time = time.time()
+            upper = 0.04
+        else:
+            commanded = _vector(hand_state.get("action"), 6,
+                                "commanded Inspire joints")
+            hand_time = float(hand_state.get("time", float("nan")))
+            upper = 1000.0
         if (not math.isfinite(hand_time) or hand_time <= 0 or
-                np.any(measured < 0) or np.any(measured > 1000) or
-                np.any(commanded < 0) or np.any(commanded > 1000)):
-            raise RuntimeError(f"Inspire {self.stage} feedback is invalid")
+                np.any(measured < 0) or np.any(measured > upper) or
+                np.any(commanded < 0) or np.any(commanded > upper)):
+            raise RuntimeError(
+                f"{self.spec.name} {self.stage} feedback is invalid")
         force = float(np.linalg.norm(wrench[:3]))
         torque = float(np.linalg.norm(wrench[3:]))
         hand_error = float(np.max(np.abs(
@@ -198,6 +213,8 @@ class FrankaMeasuredLiftAdapter:
         self, stage: str, trajectory, *, max_duration_s: float,
         expected_hand_raw, trajectory_sha256: str,
     ) -> dict:
+        spec = end_effector_spec(getattr(
+            self.executor, "hand_name", "inspire"))
         trace_path, started, completed, trace, trace_sha256 = self._follow_measured(
             stage, trajectory, max_duration_s=max_duration_s,
             expected_hand_raw=expected_hand_raw,
@@ -231,9 +248,11 @@ class FrankaMeasuredLiftAdapter:
             }
             if name == "grasp_state":
                 record["grasp_held_scope"] = (
-                    "measured_inspire_motor_hold_only_not_key_presence")
+                    f"measured_{spec.name}_hold_only_not_key_presence")
                 record["expected_hand_raw"] = _vector(
-                    expected_hand_raw, 6, "expected Inspire hold").tolist()
+                    expected_hand_raw,
+                    spec.hand_dof,
+                    "expected end-effector hold").tolist()
             source_bytes = (json.dumps(record, indent=2, allow_nan=False)
                             + "\n").encode("utf-8")
             with source_path.open("xb") as stream:
@@ -247,7 +266,7 @@ class FrankaMeasuredLiftAdapter:
             "trajectory_complete": True, "safety_abort": False,
             "grasp_held": True,
             "grasp_held_scope":
-                "measured_inspire_motor_hold_only_not_key_presence",
+                f"measured_{spec.name}_hold_only_not_key_presence",
             "terminal_hold_acknowledged": True,
             "trajectory_sha256": trajectory_sha256,
             "started_at_s": started, "completed_at_s": completed,
@@ -261,12 +280,18 @@ class FrankaMeasuredLiftAdapter:
         if stage not in {"lift", "transfer", "lateral"}:
             raise ValueError("unknown held-motion stage")
         path = np.asarray(trajectory, dtype=np.float64)
-        hand = _vector(expected_hand_raw, 6, "expected Inspire hold")
-        if (path.ndim != 2 or path.shape[1] != 13 or len(path) < 2 or
+        # Historical Inspire executors and saved-test doubles predate the
+        # explicit hand_name field.  Preserve that route while requiring the
+        # live gripper executor to identify itself explicitly.
+        spec = end_effector_spec(getattr(self.executor, "hand_name", "inspire"))
+        hand = _vector(expected_hand_raw, spec.hand_dof,
+                       "expected end-effector hold")
+        if (path.ndim != 2 or path.shape[1] != spec.full_dof or len(path) < 2 or
                 not np.all(np.isfinite(path)) or
                 not np.allclose(path[:, 7:], path[0, 7:],
                                 atol=1e-8, rtol=0) or
-                np.any(hand < 0) or np.any(hand > 1000) or
+                np.any(hand < 0) or
+                np.any(hand > (0.04 if spec.name == "franka_gripper" else 1000)) or
                 type(max_duration_s) not in (int, float) or
                 not math.isfinite(max_duration_s) or max_duration_s <= 0 or
                 not isinstance(trajectory_sha256, str) or
@@ -284,7 +309,7 @@ class FrankaMeasuredLiftAdapter:
         observer = _ObservedArm(
             original_arm, self.executor.hand, expected_hand_raw=hand,
             limits=self.limits, deadline=time.monotonic() + max_duration_s,
-            stage=stage)
+            stage=stage, end_effector=spec.name)
         self._active = True
         self.executor.arm = observer
         self.executor._precision_held_stage = stage

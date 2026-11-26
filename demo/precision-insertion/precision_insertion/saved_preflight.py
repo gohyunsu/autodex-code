@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from .geometry import validate_se3
+from .end_effector import full_dof_end_effector_spec
 from .path_audit import _array_sha256
 
 
@@ -39,11 +40,11 @@ def _bound_artifact(directory: Path, name: object, digest: object) -> Path:
     return path
 
 
-def _path(value: np.ndarray, name: str) -> np.ndarray:
+def _path(value: np.ndarray, name: str, *, full_dof: int) -> np.ndarray:
     path = np.asarray(value, dtype=np.float64)
-    if (path.ndim != 2 or path.shape[1] != 13 or len(path) < 2 or
+    if (path.ndim != 2 or path.shape[1] != full_dof or len(path) < 2 or
             not np.all(np.isfinite(path))):
-        raise ValueError(f"{name} must be a finite 13-DOF trajectory")
+        raise ValueError(f"{name} must be a finite {full_dof}-DOF trajectory")
     return path
 
 
@@ -101,22 +102,25 @@ def verify_saved_passing_trial(report_path: Path) -> dict:
     with np.load(trajectory_file, allow_pickle=False) as archive:
         if set(archive.files) != _NPZ_FIELDS:
             raise ValueError("saved preflight trajectory fields changed")
-        trajectories = {name: _path(archive[name], name)
-                        for name in _TRAJECTORIES}
         pregrasp = np.asarray(archive["pickup_pregrasp"], dtype=np.float64)
         grasp = np.asarray(archive["pickup_grasp"], dtype=np.float64)
         wrist = np.asarray(archive["pickup_wrist"], dtype=np.float64)
         held = np.asarray(archive["held_hand_q"], dtype=np.float64)
-    if (pregrasp.shape != (6,) or grasp.shape != (6,) or
-            held.shape != (6,) or
+        spec = full_dof_end_effector_spec(7 + len(held))
+        trajectories = {name: _path(
+            archive[name], name, full_dof=spec.full_dof)
+                        for name in _TRAJECTORIES}
+    if (pregrasp.shape != (spec.hand_dof,) or
+            grasp.shape != (spec.hand_dof,) or
+            held.shape != (spec.hand_dof,) or
             not all(np.all(np.isfinite(value)) for value in
                     (pregrasp, grasp, held))):
-        raise ValueError("saved Inspire grasp or held joints are invalid")
+        raise ValueError(f"saved {spec.name} grasp or held joints are invalid")
     validate_se3(wrist, name="saved pickup wrist")
     start = np.asarray(report.get("live_start_q"), dtype=np.float64)
     reported_held = np.asarray(plan.get("held_hand_q"), dtype=np.float64)
-    if (start.shape != (13,) or not np.all(np.isfinite(start)) or
-            reported_held.shape != (6,) or
+    if (start.shape != (spec.full_dof,) or not np.all(np.isfinite(start)) or
+            reported_held.shape != (spec.hand_dof,) or
             not np.allclose(trajectories["pickup_approach"][0], start,
                             rtol=0, atol=1e-6) or
             not np.allclose(reported_held, held, rtol=0, atol=1e-6)):
@@ -170,6 +174,7 @@ def verify_saved_passing_trial(report_path: Path) -> dict:
     return {
         "schema": "precision_insertion_saved_passing_preflight_verification_v1",
         "candidate_id": "/".join(selected),
+        "end_effector": spec.name,
         "report_sha256": _sha(report_file),
         "trial_scene_sha256": artifacts["trial_scene_sha256"],
         "planned_trajectories_sha256": artifacts[

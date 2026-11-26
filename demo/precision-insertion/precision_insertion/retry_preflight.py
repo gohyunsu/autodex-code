@@ -18,6 +18,7 @@ import numpy as np
 from .candidates import select_pose_candidates, validate_catalog_session
 from .config import TaskMode
 from .endpoint import screen_grasp_endpoint
+from .end_effector import planner_end_effector_spec
 from .geometry import pose_angle_deg, validate_se3
 from .path_audit import PathAuditLimits
 from .preflight import InsertionPreflight, plan_held_transfer_and_axial
@@ -113,9 +114,11 @@ def plan_xy_retry_from_withdrawn_hold(
                 (observed_time, start_time, skew)) or skew <= 0 or
             abs(observed_time - start_time) > skew):
         raise ValueError("live start joints and observed key relation are stale")
+    spec = planner_end_effector_spec(planner)
     start = np.asarray(live_start_q, dtype=np.float64)
-    if start.shape != (13,) or not np.all(np.isfinite(start)):
-        raise ValueError("live withdrawn state must be 13 finite joints")
+    if start.shape != (spec.full_dof,) or not np.all(np.isfinite(start)):
+        raise ValueError(
+            f"live withdrawn state must be {spec.full_dof} finite joints")
     if (assessment.endpoint_screen.get("held_hand_q_measured") is None or
             not np.allclose(start[7:],
                             assessment.endpoint_screen["held_hand_q_measured"],

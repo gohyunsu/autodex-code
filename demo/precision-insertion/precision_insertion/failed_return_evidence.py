@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Mapping
 
 import numpy as np
-from autodex.utils.robot_config import FR3_CLEAR_VIEW, INSPIRE_INIT
+from autodex.utils.robot_config import FR3_CLEAR_VIEW
 
+from .end_effector import full_dof_end_effector_spec
 from .live_robot_state import LiveRobotState
 from .repose_preflight import ReposeHeldPreflight
 from .repose_release import ReposeReleasePreflight
@@ -83,10 +84,11 @@ def write_failed_return_plan(
     }
     if any(value is None for value in arrays.values()):
         raise ValueError("failed return lacks a planned motion segment")
+    spec = full_dof_end_effector_spec(len(withdrawn_state.full_q))
     validated = {}
     for name, value in arrays.items():
         path = np.asarray(value, dtype=np.float64)
-        if (path.ndim != 2 or path.shape[1] != 13 or len(path) < 2 or
+        if (path.ndim != 2 or path.shape[1] != spec.full_dof or len(path) < 2 or
                 not np.all(np.isfinite(path))):
             raise ValueError(f"failed return has malformed {name} trajectory")
         validated[name] = path.copy()
@@ -98,7 +100,7 @@ def write_failed_return_plan(
             not np.allclose(validated["post_release_lift"][-1],
                             validated["post_release_retract"][0],
                             atol=1e-4, rtol=0) or
-            not np.allclose(release.release_hand_q, INSPIRE_INIT,
+            not np.allclose(release.release_hand_q, spec.open_q,
                             atol=1e-8, rtol=0) or
             not np.allclose(release.retreat_goal_arm_q, FR3_CLEAR_VIEW,
                             atol=1e-8, rtol=0) or
@@ -166,6 +168,7 @@ def write_failed_return_plan(
         "attempt_id": attempt_id, "candidate_id": candidate_id,
         "session_calibration_sha256": session_calibration_sha256,
         "catalog_sha256": catalog_sha256,
+        "end_effector": spec.name,
         "sources": sources,
         "return_origin": "transfer" if transfer_origin else "insertion",
         "held_start_completed_at_s": start_completed,
@@ -257,12 +260,16 @@ def verify_failed_return_execution(
             _finite(measured.get("sample_timestamp_s"), "joint time") <=
             _finite(start_completed, "held start time")):
         raise ValueError("failed return lacks a later measured start state")
+    measured_q = np.asarray(measured.get("full_q"), dtype=float)
+    spec = full_dof_end_effector_spec(len(measured_q))
+    if report.get("end_effector", spec.name) != spec.name:
+        raise ValueError("failed return end effector differs from feedback")
     with np.load(archive, allow_pickle=False) as paths:
         if (set(paths.files) != {
                 "held_transfer", "held_descent", "post_release_lift",
                 "post_release_retract"} or
                 not np.allclose(paths["held_transfer"][0],
-                                np.asarray(measured.get("full_q"), dtype=float),
+                                measured_q,
                                 atol=1e-8, rtol=0)):
             raise ValueError("failed return planned start differs from feedback")
     if row["source"] == STOCK_SOURCE:
@@ -305,13 +312,13 @@ def verify_failed_return_execution(
                 raise ValueError("stock return lacks measured checkpoints")
             stamp = _finite(state.get("sample_timestamp_s"), "checkpoint time")
             q = np.asarray(state.get("full_q"), dtype=float)
-            if (stamp <= previous_sample or q.shape != (13,) or
+            if (stamp <= previous_sample or q.shape != (spec.full_dof,) or
                     not np.isfinite(q).all() or
                     np.max(np.abs(q - endpoint)) > 0.05):
                 raise ValueError("stock return missed its measured checkpoint")
             previous_sample = stamp
         final_q = np.asarray(samples[-1]["state"]["full_q"], dtype=float)
-        if (np.max(np.abs(final_q[7:] - INSPIRE_INIT)) > 0.05 or
+        if (np.max(np.abs(final_q[7:] - spec.open_q)) > 0.05 or
                 np.max(np.abs(final_q[:7] - FR3_CLEAR_VIEW)) > 0.05 or
                 row.get("hand_open_final") is not True or
                 row.get("arm_clear_view_final") is not True):

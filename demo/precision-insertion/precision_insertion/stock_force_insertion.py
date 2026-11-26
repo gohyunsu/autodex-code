@@ -15,6 +15,7 @@ import time
 import numpy as np
 
 from .franka_completion_checked import is_demo_completion_checked_executor
+from .end_effector import end_effector_spec
 
 
 STOCK_PLACE_FORCE_N = 12.0
@@ -62,10 +63,11 @@ class FrankaForceStopInsertionAdapter:
                                      force_axis_robot: np.ndarray,
                                      force_threshold_n: float = STOCK_PLACE_FORCE_N) -> dict:
         path = np.asarray(axial, dtype=np.float64)
+        spec = end_effector_spec(getattr(self.executor, "hand_name", "inspire"))
         baseline = np.asarray(baseline_force_robot_n, dtype=np.float64)
         axis = np.asarray(force_axis_robot, dtype=np.float64)
         axis_norm = float(np.linalg.norm(axis))
-        if (path.ndim != 2 or path.shape[1] != 13 or len(path) < 2 or
+        if (path.ndim != 2 or path.shape[1] != spec.full_dof or len(path) < 2 or
                 not np.isfinite(path).all() or
                 baseline.shape != (3,) or not np.isfinite(baseline).all() or
                 axis.shape != (3,) or not np.isfinite(axis).all() or

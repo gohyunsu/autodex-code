@@ -17,6 +17,7 @@ from typing import Mapping
 import numpy as np
 
 from .config import TaskMode
+from .end_effector import end_effector_spec
 from .geometry import validate_se3
 from .key_perception import KeyPoseObservation, verify_key_capture_artifacts
 from .live_robot_state import LiveRobotState
@@ -64,9 +65,11 @@ def write_observed_physical_pickup_sample(
     observation.require_state_alignment(
         state_timestamp_s=joint_sample.sample_timestamp_s,
         maximum_skew_s=max_state_skew_s)
-    if (joint_sample.full_q.shape != (13,) or
+    spec = end_effector_spec(joint_sample.end_effector)
+    if (joint_sample.full_q.shape != (spec.full_dof,) or
             not np.all(np.isfinite(joint_sample.full_q))):
-        raise ValueError("physical sample needs measured FR3/Inspire joints")
+        raise ValueError(
+            f"physical sample needs measured FR3/{spec.name} joints")
     source = Path(evidence_dir).expanduser().resolve()
     manifest = verify_key_capture_artifacts(source)
     saved = json.loads((source / "key_observation.json").read_text(
@@ -90,6 +93,7 @@ def write_observed_physical_pickup_sample(
         "T_robot_key_observed": key_robot.tolist(),
         "T_robot_hand_measured": wrist_robot.tolist(),
         "hand_q_measured": joint_sample.full_q[7:].tolist(),
+        "end_effector": spec.name,
         **{name: float(value) for name, value in error_bounds.items()},
         "key_measurement_method": "fresh_multiview_SAM3_FoundPose",
         "wrist_measurement_method": "measured_FR3_joints_plus_planner_FK",

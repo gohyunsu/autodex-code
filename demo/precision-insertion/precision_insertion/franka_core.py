@@ -14,10 +14,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from .assets import selected_fr3_inspire_urdf
+from .assets import selected_robot_urdf
 from .clear_view import ClearViewForPerception
 from .feedback_buffer import ExposureStateBuffer, RobotFeedbackSampler
-from .live_robot_state import LiveRobotState, read_live_franka_inspire_state
+from .live_robot_state import (
+    LiveRobotState, read_live_franka_gripper_state,
+    read_live_franka_inspire_state,
+)
+from .end_effector import end_effector_spec
 from .mount_geometry import link8_to_hand
 from .timing_profile import timed
 
@@ -84,6 +88,13 @@ class FrankaRuntimeCore:
                 settings.max_sampling_arm_velocity_rad_s))
 
         def sample_state() -> LiveRobotState:
+            if end_effector_spec(getattr(
+                    self.executor, "hand_name", "inspire")).name == "franka_gripper":
+                return read_live_franka_gripper_state(
+                    arm=self.executor.arm,
+                    max_sample_age_s=self.feedback.max_sample_age_s,
+                    max_arm_velocity_rad_s=(
+                        settings.max_sampling_arm_velocity_rad_s))
             return read_live_franka_inspire_state(
                 arm=self.executor.arm, hand=self.executor.hand,
                 max_arm_hand_skew_s=self.feedback.max_arm_hand_skew_s,
@@ -137,43 +148,50 @@ def open_franka_core(
     """
     if not isinstance(feedback, FrankaFeedbackSettings):
         raise TypeError("FR3 runtime needs explicit feedback settings")
-    mount_urdf = selected_fr3_inspire_urdf()
+    spec = end_effector_spec()
+    mount_urdf = selected_robot_urdf()
     if not mount_urdf.is_file():
-        raise FileNotFoundError(f"selected FR3/Inspire mount URDF is missing: {mount_urdf}")
+        raise FileNotFoundError(f"selected FR3/{spec.name} URDF is missing: {mount_urdf}")
     if planner_factory is None:
         from autodex.planner import GraspPlanner
 
         planner_factory = lambda: GraspPlanner(
-            hand="fr3_inspire", robot_urdf_path=str(mount_urdf))
+            hand=spec.planner_hand, robot_urdf_path=str(mount_urdf))
     # cuRobo loads CUDA during planner construction. Do that before opening a
     # robot connection, so a missing GPU never touches the Franka daemon.
     planner = planner_factory()
     if (getattr(planner, "_n_arm", None) != 7 or
-            getattr(planner, "_hand", None) != "fr3_inspire"):
-        raise TypeError("FR3 runtime needs GraspPlanner(hand='fr3_inspire')")
+            getattr(planner, "_hand", None) != spec.planner_hand):
+        raise TypeError(
+            f"FR3 runtime needs GraspPlanner(hand={spec.planner_hand!r})")
     if executor_factory is None:
         from .franka_completion_checked import completion_checked_franka_class
 
         executor_factory = lambda: completion_checked_franka_class()(
-            hand_name="inspire", ee_to_hand=link8_to_hand(mount_urdf),
+            hand_name=spec.name, ee_to_hand=link8_to_hand(mount_urdf),
             object_safety_speed_scale=PRECISION_OBJECT_SAFETY_SPEED_SCALE)
     executor = executor_factory()
     try:
         if (getattr(executor, "arm_dof", None) != 7 or
-                getattr(executor, "hand_name", None) not in
-                {"inspire", "inspire_left"} or
+                end_effector_spec(getattr(executor, "hand_name", None)).name !=
+                spec.name or
                 not callable(getattr(executor, "shutdown", None)) or
                 not callable(getattr(executor, "set_speed_profile_planner", None))):
             raise TypeError("FR3 runtime needs the stock Franka/Inspire executor")
         # Match run_auto.py: generic return/recovery trajectories use this
         # planner for the stock live object-proximity speed profile.
         executor.set_speed_profile_planner(planner)
-        if hand_force_set_raw is not None:
+        if hand_force_set_raw is not None and spec.name == "inspire":
             # The stock Inspire constructor writes 400 to all six channels.
             # This demo-local override permits a commissioned setting for the
             # ZeroDex hand without modifying the shared ParaDex controller.
             executor.hand.write6("forceSet", list(hand_force_set_raw))
         def read_state() -> LiveRobotState:
+            if spec.name == "franka_gripper":
+                return read_live_franka_gripper_state(
+                    arm=executor.arm,
+                    max_sample_age_s=feedback.max_sample_age_s,
+                    max_arm_velocity_rad_s=feedback.max_arm_velocity_rad_s)
             return read_live_franka_inspire_state(
                 arm=executor.arm, hand=executor.hand,
                 max_arm_hand_skew_s=feedback.max_arm_hand_skew_s,

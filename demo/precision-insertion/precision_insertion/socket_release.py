@@ -16,8 +16,9 @@ from pathlib import Path
 import numpy as np
 
 from autodex.utils.conversion import se32cart
-from autodex.utils.robot_config import FR3_CLEAR_VIEW, INSPIRE_INIT
+from autodex.utils.robot_config import FR3_CLEAR_VIEW
 
+from .end_effector import end_effector_spec
 from .geometry import validate_se3
 from .guarded_axial_handoff import verify_guarded_axial_handoff
 from .path_audit import PathAuditLimits
@@ -46,12 +47,13 @@ def _check_path(planner, scene: dict, path: np.ndarray) -> dict:
 def _path(value, name: str, *, hand: np.ndarray,
           limits: PathAuditLimits) -> np.ndarray:
     path = np.asarray(value, dtype=np.float64)
-    if (path.ndim != 2 or path.shape[1] != 13 or len(path) < 2 or
+    full_dof = 7 + len(hand)
+    if (path.ndim != 2 or path.shape[1] != full_dof or len(path) < 2 or
             not np.all(np.isfinite(path)) or
             not np.allclose(path[:, 7:], hand, atol=1e-5, rtol=0) or
             np.max(np.abs(np.diff(path, axis=0))) >
             limits.max_joint_step_rad + 1e-6):
-        raise ValueError(f"{name} lacks a dense open-hand FR3/Inspire path")
+        raise ValueError(f"{name} lacks a dense open-hand FR3 path")
     return path
 
 
@@ -61,9 +63,11 @@ def check_socket_opening(
 ) -> tuple[np.ndarray, dict]:
     """Check the same held-to-open hand ramp used by the live release plan."""
     held = np.asarray(held_at_depth, dtype=np.float64)
-    release_hand = np.asarray(INSPIRE_INIT, dtype=np.float64)
-    if held.shape != (13,) or not np.all(np.isfinite(held)):
-        raise ValueError("socket opening needs a finite 13-DOF endpoint")
+    spec = end_effector_spec()
+    release_hand = spec.open_q
+    if held.shape != (spec.full_dof,) or not np.all(np.isfinite(held)):
+        raise ValueError(
+            f"socket opening needs a finite {spec.full_dof}-DOF endpoint")
     opening_count = max(10, int(math.ceil(float(np.max(np.abs(
         held[7:] - release_hand))) / limits.max_joint_step_rad)))
     if opening_count > 1000:
@@ -114,12 +118,14 @@ def plan_socket_release_exit(
         raise ValueError("release source axial path changed")
     with np.load(archive_path, allow_pickle=False) as archive:
         axial = np.asarray(archive["axial"], dtype=np.float64)
-    if (axial.ndim != 2 or axial.shape[1] != 13 or len(axial) < 2 or
+    spec = end_effector_spec()
+    if (handoff.get("end_effector", spec.name) != spec.name or
+            axial.ndim != 2 or axial.shape[1] != spec.full_dof or len(axial) < 2 or
             not np.all(np.isfinite(axial)) or
             not np.array_equal(axial[0], handoff["axial_start_q"]) or
             not np.array_equal(axial[-1], handoff["axial_end_q"])):
         raise ValueError("release source differs from verified axial handoff")
-    release_hand = np.asarray(INSPIRE_INIT, dtype=np.float64)
+    release_hand = spec.open_q
     axial_exit = axial[::-1].copy()
     axial_exit[:, 7:] = release_hand
     axial_exit = _path(axial_exit, "socket-axis exit", hand=release_hand,
@@ -149,8 +155,9 @@ def plan_socket_release_exit(
     # endpoints. The hand stays open during this arm-only retract; replay that
     # exact commanded path against the inserted-key world below.
     retract = np.asarray(retract_raw, dtype=np.float64).copy()
-    if retract.ndim != 2 or retract.shape[1] != 13:
-        raise ValueError("clear-view retract has no FR3/Inspire joint path")
+    if retract.ndim != 2 or retract.shape[1] != spec.full_dof:
+        raise ValueError(
+            f"clear-view retract has no FR3/{spec.name} joint path")
     retract[:, 7:] = release_hand
     retract = _path(retract, "clear-view retract", hand=release_hand,
                     limits=limits)
@@ -171,6 +178,7 @@ def plan_socket_release_exit(
     report = {
         "schema": SCHEMA, "attempt_id": attempt.attempt_id,
         "candidate_id": attempt.candidate_id,
+        "end_effector": spec.name,
         "session_calibration_sha256": runner.session_sha256,
         "handoff": {"path": str(handoff_path), "sha256": _sha(handoff_path)},
         "inserted_key_mesh": {"path": str(key_path), "sha256": _sha(key_path)},
@@ -233,9 +241,12 @@ def verify_socket_release_plan(report_path: Path) -> tuple[dict, dict]:
             raise ValueError("release path archive is incomplete")
         paths = {name: np.asarray(archive[name], dtype=np.float64)
                  for name in archive.files}
-    opened = np.asarray(INSPIRE_INIT, dtype=np.float64)
+    spec = end_effector_spec(report.get("end_effector", "inspire"))
+    if report.get("end_effector", spec.name) != spec.name:
+        raise ValueError("release plan end effector is inconsistent")
+    opened = spec.open_q
     for name, path in paths.items():
-        if (path.shape != (report["sample_counts"][name], 13) or
+        if (path.shape != (report["sample_counts"][name], spec.full_dof) or
                 len(path) < 2 or not np.all(np.isfinite(path))):
             raise ValueError("release path samples changed")
     with np.load(Path(handoff["trajectory_archive_path"]),

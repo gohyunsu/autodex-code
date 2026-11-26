@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import TaskMode, select_mode
+from .end_effector import end_effector_spec
 from .geometry import validate_se3
 from .live_robot_state import LiveRobotState
 from .preinsert_checkpoint import verify_preinsert_checkpoint
@@ -51,6 +52,8 @@ def _state_from_record(record: dict) -> LiveRobotState:
             max_hand_command_error_raw=record["max_hand_command_error_raw"],
             wrench=np.asarray(record["wrench"], dtype=float),
             source=record["source"],
+            end_effector=record.get("end_effector", "inspire"),
+            gripper_grasping=record.get("gripper_grasping"),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("axial handoff robot state is malformed") from exc
@@ -154,9 +157,10 @@ def _build_record(
         axial = np.asarray(archive["axial"], dtype=np.float64)
         transfer = np.asarray(archive["transfer"], dtype=np.float64)
     held = np.asarray(planning.get("held_hand_q"), dtype=float)
-    if (axial.ndim != 2 or axial.shape[1] != 13 or len(axial) < 2 or
-            transfer.ndim != 2 or transfer.shape[1] != 13 or
-            len(transfer) < 2 or held.shape != (6,) or
+    spec = end_effector_spec(measured_start.end_effector)
+    if (axial.ndim != 2 or axial.shape[1] != spec.full_dof or len(axial) < 2 or
+            transfer.ndim != 2 or transfer.shape[1] != spec.full_dof or
+            len(transfer) < 2 or held.shape != (spec.hand_dof,) or
             not np.all(np.isfinite(axial)) or
             not np.all(np.isfinite(transfer)) or
             not np.all(np.isfinite(held)) or
@@ -185,6 +189,7 @@ def _build_record(
         "axial_end_q": axial[-1].tolist(),
         "axial_sample_count": len(axial),
         "target_depth_m": mode.target_depth_m,
+        "end_effector": spec.name,
         "measured_start": measured_start.to_record(),
         "decision_timestamp_s": decision_at,
         "scope": "read_only_axial_handoff_not_motion_or_key_depth_success",

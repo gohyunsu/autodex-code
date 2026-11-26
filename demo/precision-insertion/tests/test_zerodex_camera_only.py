@@ -256,7 +256,7 @@ def test_camera_only_launcher_forwards_gap_mm(tmp_path):
     args = completed.stdout.splitlines()
     assert args[args.index("--gap-mm") + 1] == "5"
     assert args[args.index("--endpoint-catalog") + 1] == str(
-        stage / "recipient_gap5_endpoint_catalog_straight.json")
+        stage / "recipient_gap5_endpoint_catalog_franka_gripper.json")
 
 
 def test_key_already_placed_reuses_socket_without_operator_wait(
