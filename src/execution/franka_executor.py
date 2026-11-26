@@ -24,14 +24,15 @@ Execution sequence (identical to real.py):
     execute:  init(FR3_INIT) -> approach -> pregrasp -> grasp -> squeeze -> lift
     release:  open hand -> (reset retracts to clear-view)
 """
+from __future__ import annotations
+
 import datetime
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 
 import numpy as np
 
-from autodex.planner import PlanResult
 from autodex.executor.lift_policy import LiftExecutionError, check_lift_start
 from autodex.executor.timing import (
     finish_pickup_timing, finish_place_timing, new_pickup_timing,
@@ -46,6 +47,9 @@ from autodex.executor.real import _convert_inspire   # rad -> 0-1000 controller 
 from .follow_progress import advance_reference_index, measured_path_index
 from .reset_scene import scene_for_reset, vertical_clearance_poses
 from .stream_timing import stream_command_validity_ms, velocity_retention
+
+if TYPE_CHECKING:
+    from autodex.planner import PlanResult
 
 # The final part of every free-hand move is deliberately slowed.  The metric is
 # the closest distance from the object *mesh surface* to one of the hand-link
