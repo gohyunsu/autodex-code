@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Run the real capture4 socket/key perception path without a robot.
 
-For a fresh session, leave only the fixed socket on board 9 at startup and
-place the key after socket measurement. With explicit saved-socket reuse,
+For a fresh board-free session, leave only the fixed socket on the calibrated
+table surface at startup and place the key after socket measurement. With
+explicit saved-socket reuse,
 the key may already be present. This diagnostic reuses the
 same session, pose-only key admission, tabletop and catalog code as the live
 pipeline; it neither builds a Franka executor nor plans or commands a
@@ -265,7 +266,7 @@ def main(argv: list[str] | None = None) -> int:
         print("Reusing the saved fixed-socket session; leave the socket unmoved.")
     def wait_for_key() -> None:
         if not args.key_already_placed:
-            input("Place or confirm the key on the board, then press Enter to recognize it... ")
+            input("Place or confirm the key on the calibrated table surface, then press Enter to recognize it... ")
 
     report = run_camera_only(
         launch_config=args.launch_config,

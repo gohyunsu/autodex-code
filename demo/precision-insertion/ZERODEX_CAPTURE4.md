@@ -11,8 +11,8 @@ the per-capture pose cluster retained cameras `25322639`, `25322642`, and
 `26053248` and excluded `25305462` for that measurement only. This is not a
 persistent camera blacklist.
 
-Reuse this evidence only while the board and socket have physically remained
-fixed since that capture. If either moved, omit
+Reuse this evidence only while the socket fixture and camera geometry have
+physically remained fixed since that capture. If either moved, omit
 `PRECISION_REUSE_SESSION_EVIDENCE`, measure the socket once with the key
 absent, and use the newly created evidence for the session. The older
 2026-10-30 `_03`/`_04` bundles describe earlier fixture locations and are not
@@ -22,9 +22,9 @@ Run outputs and active assets stay under the independent
 `/mnt/paradex2/hyunsu/precision_insertion` project; the capture4 camera
 installation remains the explicit external dependency.
 
-If the board, socket, and camera geometry have not moved, start the robot,
-hand, FCI daemon, and namespaced capture4 services as described below. With
-the key upright on the board, use:
+If the socket fixture and camera geometry have not moved, start the robot,
+selected end effector, FCI daemon, and namespaced capture4 services as
+described below. With the key upright on the calibrated table surface, use:
 
 ```bash
 cd /home/hyunsu/autodex-code
@@ -34,7 +34,7 @@ export PRECISION_KEY_ALREADY_PLACED=1
 export PRECISION_LABEL_MODE=manual
 export PRECISION_EXPERIMENT_PROFILE=fixed_grasp_endpoint_alignment_5mm.env.sh
 bash demo/precision-insertion/run_zerodex_capture4.sh --check
-# Run this only after Franka, Inspire, FCI and the daemon are ready:
+# Run this only after Franka, the selected end effector, FCI and the daemon are ready:
 bash demo/precision-insertion/run_zerodex_capture4.sh --run
 ```
 
@@ -52,7 +52,7 @@ Leave `PRECISION_EXPERIMENT_PROFILE` unset for ordinary adaptive candidate
 selection. Direct CLI equivalent: `--initial-candidate table/0/20195
 --fixed-candidate`.
 
-The final command moves the robot. If the socket or board moved, unset
+The final command moves the robot. If the socket fixture moved, unset
 `PRECISION_REUSE_SESSION_EVIDENCE`, remove the key for a new socket-only
 measurement, and then place the key for the following trial. The detailed NAS
 layout, recording upload command, and known limits are in
@@ -500,7 +500,7 @@ state could not plan 90° or 150° turns after the raise. Camera visibility
 at 60° remains untested. These
 are read-only replays, not physical outcomes; choose the observation action
 from new image evidence instead of assuming one angle works for every grasp.
-Start with the socket alone on the board; the launcher prompts for key
+Start with the socket alone on the calibrated table surface; the launcher prompts for key
 placement after socket measurement:
 
 ```bash
@@ -510,7 +510,7 @@ export PRECISION_XY_ESTIMATOR=sam_half_ellipse
 export PRECISION_SAME_TRIAL_OBSERVATION_RAISE_MM=40
 unset PRECISION_REUSE_SESSION_EVIDENCE
 bash demo/precision-insertion/run_zerodex_capture4.sh --check
-# With capture4, Franka and Inspire services ready, socket alone on the board:
+# With capture4, Franka and the selected end effector ready, socket alone on the table:
 bash demo/precision-insertion/run_zerodex_capture4.sh --run
 ```
 

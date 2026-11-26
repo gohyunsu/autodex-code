@@ -112,8 +112,10 @@ cameras and the current 5 mm straight-mount candidate policy.
 ## Runtime sequence
 
 1. Move the open hand to the measured ZeroDex clear-view joint pose.
-2. Capture the fixed socket once, estimate its board/robot-frame pose and
-   freeze the collision world for the session.
+2. Capture the fixed socket once, estimate its pose in the calibrated robot
+   frame and freeze the collision world for the session. The default
+   `board_free` profile uses the commissioned extrinsics and measured table
+   plane; no ChArUco observation is required at runtime.
 3. Observe the newly placed key and select an endpoint-screened grasp.
 4. Plan and execute pickup, squeeze and lift; wait two seconds before the lift
    snapshot so a later slip is recorded as transfer failure rather than grasp

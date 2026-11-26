@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     trial.add_argument("--key-capture-time-s", type=float, required=True,
                        help="actual image-acquisition timestamp, same clock as session")
     trial.add_argument("--live-start-q-npy", type=Path, required=True,
-                       help="saved measured 13-DOF FR3/Inspire start joints")
+                       help="saved measured FR3/selected-end-effector start joints")
     trial.add_argument("--start-q-time-s", type=float, required=True,
                        help="joint sample timestamp on the key exposure clock")
     trial.add_argument("--max-key-state-skew-s", type=float, required=True)
