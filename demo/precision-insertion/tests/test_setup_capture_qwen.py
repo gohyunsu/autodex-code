@@ -28,13 +28,23 @@ def test_versioned_capture4_workers_share_isolated_gpu_process():
 
 
 def test_setup_uses_explicit_shared_host_mapping(tmp_path, capsys):
-    source = tmp_path / "franka_runtime.json"
-    output = tmp_path / "franka_runtime_capture4_qwen.json"
+    source_dir = tmp_path / "source"
+    output_dir = tmp_path / "output"
+    source_dir.mkdir()
+    output_dir.mkdir()
+    source = source_dir / "franka_runtime.json"
+    output = output_dir / "franka_runtime_capture4_qwen.json"
     worker_root = tmp_path / "qwen_worker"
     workers_file = tmp_path / "workers.json"
     source.write_text(json.dumps({"vlm": {
         "mode": "local", "model_id": "/local/model",
     }}), encoding="utf-8")
+    clear_view = source_dir / "clear_view_arm_q.json"
+    clear_view.write_text(json.dumps({
+        "schema": "precision_insertion_zerodex_clear_view_v1",
+        "robot_fci_ip": "172.16.1.11",
+        "arm_q": [0.0] * 7,
+    }), encoding="utf-8")
     shared = {
         "host": "capture4@192.0.2.4", "ssh_port": 77,
         "python": "/home/capture4/python",
@@ -68,6 +78,13 @@ def test_setup_uses_explicit_shared_host_mapping(tmp_path, capsys):
         worker.read_bytes()).hexdigest()
     assert manifest["output_config"]["sha256"] == hashlib.sha256(
         output.read_bytes()).hexdigest()
+    copied_clear_view = output_dir / "clear_view_arm_q.json"
+    assert copied_clear_view.read_bytes() == clear_view.read_bytes()
+    assert manifest["runtime_sidecars"] == [{
+        "path": str(copied_clear_view),
+        "bytes": len(clear_view.read_bytes()),
+        "sha256": hashlib.sha256(clear_view.read_bytes()).hexdigest(),
+    }]
     output_text = capsys.readouterr().out
     assert str(output) in output_text
     assert str(worker_root / "MANIFEST.json") in output_text

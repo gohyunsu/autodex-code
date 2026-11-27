@@ -82,6 +82,17 @@ def main(argv: list[str] | None = None) -> None:
     })
     output_config.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n",
                              encoding="utf-8")
+    # The ZeroDex integration deliberately keeps the measured clear-view
+    # record beside the robot runtime JSON.  A distributed-VLM config lives in
+    # a different local directory, so carry that calibration sidecar with the
+    # derived config instead of making its meaning depend on the launch cwd.
+    runtime_sidecars = []
+    clear_view = source_config.parent / "clear_view_arm_q.json"
+    if clear_view.is_file():
+        copied_clear_view = output_config.parent / clear_view.name
+        if clear_view != copied_clear_view:
+            shutil.copy2(clear_view, copied_clear_view)
+        runtime_sidecars.append(_file_record(copied_clear_view))
     manifest = {
         "schema": "precision_insertion_qwen_worker_stage_v1",
         "scope": "active_worker_files_only_not_model_weights",
@@ -92,6 +103,7 @@ def main(argv: list[str] | None = None) -> None:
         ],
         "source_config": _file_record(source_config),
         "output_config": _file_record(output_config),
+        "runtime_sidecars": runtime_sidecars,
         "workers_config": (
             _file_record(args.workers_json.resolve(strict=True))
             if args.workers_json is not None else None),
