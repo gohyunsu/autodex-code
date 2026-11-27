@@ -9,13 +9,16 @@ does not claim the camera or change capture4's installed ParaDex source.
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+import threading
 import time
 
 
@@ -27,6 +30,24 @@ def recording_receipt_directory(root: Path, run_id: str) -> Path:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", run_id):
         raise ValueError("run ID must be path-safe")
     return Path(root).expanduser().resolve() / run_id
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _tee_pipeline_output(stream, log_path: Path) -> None:
+    """Mirror child output to the terminal and a local evidence file."""
+    with log_path.open("w", encoding="utf-8") as output:
+        for line in stream:
+            output.write(line)
+            output.flush()
+            sys.stdout.write(line)
+            sys.stdout.flush()
 
 
 def _ssh(host: str, port: str, command: str, *, check: bool = True):
@@ -137,8 +158,10 @@ def run(mode: str) -> int:
     trigger = trigger_root / f"{run_tag}.execution_ready.json"
     ready_ack = trigger_root / f"{run_tag}.recording_ready.json"
     stop_trigger = trigger_root / f"{run_tag}.final_capture.json"
+    local_pipeline_log = trigger_root / f"{run_tag}.pipeline.log"
     for marker in (trigger, ready_ack, stop_trigger):
         marker.unlink(missing_ok=True)
+    local_pipeline_log.unlink(missing_ok=True)
     env = {**os.environ, "PRECISION_RUN_TAG": run_tag,
            "PRECISION_EXECUTION_READY_MARKER": str(trigger),
            "PRECISION_RECORDING_READY_ACK": str(ready_ack),
@@ -159,10 +182,21 @@ def run(mode: str) -> int:
     recording_trigger = None
     recording_stop_trigger = None
     recording_stop_reason = None
+    output_thread = None
     exit_code = 1
     try:
         pipeline = subprocess.Popen(
-            ["bash", str(HERE / "run_robot_pc.sh"), mode], env=env)
+            ["bash", str(HERE / "run_robot_pc.sh"), mode], env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1)
+        if pipeline.stdout is None:
+            raise RuntimeError("pipeline stdout capture was not created")
+        output_thread = threading.Thread(
+            target=_tee_pipeline_output,
+            args=(pipeline.stdout, local_pipeline_log),
+            name=f"precision-pipeline-log-{run_tag}",
+            daemon=True)
+        output_thread.start()
         while True:
             status = pipeline.poll()
             if not recorder_was_started and trigger.is_file():
@@ -221,6 +255,8 @@ def run(mode: str) -> int:
                 break
             time.sleep(.02)
     finally:
+        if output_thread is not None:
+            output_thread.join()
         if recorder_started:
             try:
                 recording_manifest = _stop_recorder(
@@ -235,6 +271,15 @@ def run(mode: str) -> int:
             recorder_started = False
             recording_stopped_ns = time.time_ns()
             recording_stop_reason = "pipeline_exit"
+        pipeline_log = None
+        if local_pipeline_log.is_file():
+            preserved_log = receipt_dir / "pipeline.log"
+            shutil.copyfile(local_pipeline_log, preserved_log)
+            pipeline_log = {
+                "path": preserved_log.name,
+                "size_bytes": preserved_log.stat().st_size,
+                "sha256": _sha256(preserved_log),
+            }
         receipt = {
             "schema": "precision_insertion_zerodex_recording_receipt_v1",
             "rig": "zerodex_capture4", "mode": mode, "run_id": run_tag,
@@ -250,6 +295,7 @@ def run(mode: str) -> int:
             "recording_stopped_unix_ns": recording_stopped_ns,
             "recording_stop_reason": recording_stop_reason,
             "pipeline_exit_code": exit_code,
+            "pipeline_log": pipeline_log,
             "code_commit": code_commit,
             "recording": recording_manifest,
             "recording_error": recording_error,
@@ -262,6 +308,7 @@ def run(mode: str) -> int:
               flush=True)
         for marker in (trigger, ready_ack, stop_trigger):
             marker.unlink(missing_ok=True)
+        local_pipeline_log.unlink(missing_ok=True)
     return exit_code
 
 
