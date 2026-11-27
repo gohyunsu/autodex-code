@@ -1,8 +1,12 @@
 """Robotiq network adapter preserves the planner/rPR command contract."""
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import sys
+import threading
+import time
 
+import msgpack
 import numpy as np
 
 
@@ -47,3 +51,34 @@ def test_close_until_contact_returns_measured_not_requested_joint():
 
     assert client.sent == [(255, 255, 255)]
     np.testing.assert_allclose(measured, robotiq_q_from_position(166))
+
+
+def test_feedback_and_motion_requests_share_one_req_socket_serially():
+    class StrictReqSocket:
+        def __init__(self):
+            self.in_flight = False
+            self.types = []
+
+        def send(self, packed):
+            if self.in_flight:
+                raise AssertionError("REQ send interleaved before its recv")
+            self.in_flight = True
+            self.types.append(msgpack.unpackb(packed, raw=False)["type"])
+            # Release the GIL so the other worker would interleave here if
+            # RobotiqRemote did not own a request lock.
+            time.sleep(.02)
+
+        def recv(self):
+            assert self.in_flight
+            self.in_flight = False
+            return msgpack.packb({"ok": True}, use_bin_type=True)
+
+    client = object.__new__(RobotiqRemote)
+    client._request_lock = threading.RLock()
+    client._command = StrictReqSocket()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        answers = list(pool.map(
+            client._request, ({"type": "read_state"}, {"type": "ping"})))
+
+    assert answers == [{"ok": True}, {"ok": True}]
+    assert sorted(client._command.types) == ["ping", "read_state"]

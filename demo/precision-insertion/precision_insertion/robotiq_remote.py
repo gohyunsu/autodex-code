@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import threading
 import time
 from typing import Any
 
@@ -36,6 +37,11 @@ class RobotiqRemote:
         if not 0 <= self.speed <= 255 or not 0 <= self.force <= 255:
             raise ValueError("Robotiq speed and force must be in [0, 255]")
         self._context = zmq.Context()
+        # The session-long feedback sampler calls get_data() while the motion
+        # thread calls move().  A ZMQ REQ socket permits exactly one
+        # send/receive exchange at a time; serialize those exchanges instead
+        # of allowing the two threads to put the socket into EFSM state.
+        self._request_lock = threading.RLock()
         self._command = self._new_command_socket()
         self._state = self._context.socket(zmq.SUB)
         self._state.setsockopt(zmq.SUBSCRIBE, b"")
@@ -54,14 +60,16 @@ class RobotiqRemote:
         return socket
 
     def _request(self, payload: dict[str, Any]) -> dict[str, Any]:
-        try:
-            self._command.send(msgpack.packb(payload, use_bin_type=True))
-            packed = self._command.recv()
-        except zmq.Again as exc:
-            self._command.close(linger=0)
-            self._command = self._new_command_socket()
-            raise TimeoutError(
-                f"Capture4 Robotiq request timed out: {payload['type']}") from exc
+        with self._request_lock:
+            try:
+                self._command.send(msgpack.packb(payload, use_bin_type=True))
+                packed = self._command.recv()
+            except zmq.Again as exc:
+                self._command.close(linger=0)
+                self._command = self._new_command_socket()
+                raise TimeoutError(
+                    f"Capture4 Robotiq request timed out: "
+                    f"{payload['type']}") from exc
         response = msgpack.unpackb(packed, raw=False)
         if response.get("ok") is not True:
             raise RuntimeError(response.get("error", "Robotiq request failed"))
