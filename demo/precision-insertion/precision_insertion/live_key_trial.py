@@ -89,6 +89,7 @@ def _capture_admitted_key(
     capture_timeout_s: float, image_write_timeout_s: float,
     request_id_factory: Callable[[], int] | None,
     registered_key_assistance: RegisteredKeyAssistance | None,
+    before_pose_admission: Callable[[], None] | None = None,
     pose_only: bool = False,
 ) -> KeyPoseObservation:
     """Shared AutoDex SAM/FoundPose capture; no candidate planning here."""
@@ -97,6 +98,9 @@ def _capture_admitted_key(
             key_prompt == "object"):
         raise ValueError("key capture needs safe ID and a specific SAM prompt")
     reject_incorrect_object_color(key_prompt)
+    if (before_pose_admission is not None and
+            not callable(before_pose_admission)):
+        raise TypeError("pose-admission callback must be callable")
     if (not isinstance(image_hw, tuple) or len(image_hw) != 2 or
             any(type(value) is not int or value <= 0 for value in image_hw) or
             type(socket_projection_dilation_px) is not int or
@@ -170,6 +174,7 @@ def _capture_admitted_key(
     if pose_only:
         prompts.append("white plastic cylindrical key" if key_prompt ==
                        "small white solid peg" else "small white solid peg")
+    admission_ready = False
     for attempt, prompt in enumerate(prompts):
         with timed("key.capture", phase="key", kind="camera",
                    capture_id=capture_id, camera_count=len(calibrated_camera_ids),
@@ -196,6 +201,13 @@ def _capture_admitted_key(
             diagnostic_dir = write_registered_key_diagnostic(
                 capture=capture, derivation_report=derivation)
             verify_registered_key_diagnostic(diagnostic_dir)
+        if not admission_ready and before_pose_admission is not None:
+            # Capture4 SAM/FoundPose and image transport may overlap cuRobo's
+            # fixed-world warmup.  Join only at the first local IoU/silhouette
+            # render, because nvdiffrast cannot execute while cuRobo captures
+            # CUDA graphs in another thread on the same device.
+            before_pose_admission()
+            admission_ready = True
         try:
             with timed("key.pose_admission", phase="key", attempt=attempt + 1):
                 observation = admit_key_capture(
@@ -334,6 +346,7 @@ def prepare_next_live_key(
     request_id_factory: Callable[[], int] | None = None,
     registered_key_assistance: RegisteredKeyAssistance | None = None,
     capture_initial_visual: Callable[[], object] | None = None,
+    before_pose_admission: Callable[[], None] | None = None,
     before_preflight: Callable[[], None] | None = None,
     on_observation: Callable[[ObservedLiveKey], None] | None = None,
 ) -> PreparedLiveKeyTrial:
@@ -365,9 +378,12 @@ def prepare_next_live_key(
     if not callable(acquisition_metadata_for_request) or not callable(
             state_for_observation):
         raise TypeError("camera evidence and exposure-time state providers are required")
-    if ((before_preflight is not None and not callable(before_preflight)) or
+    if ((before_pose_admission is not None and
+         not callable(before_pose_admission)) or
+            (before_preflight is not None and not callable(before_preflight)) or
             (on_observation is not None and not callable(on_observation))):
-        raise TypeError("preflight and observation callbacks must be callable")
+        raise TypeError(
+            "pose admission, preflight and observation callbacks must be callable")
     capture_source = Path(capture_root).expanduser()
     if not capture_source.is_absolute() or not capture_source.is_dir():
         raise ValueError("key capture root must be an existing absolute shared directory")
@@ -452,6 +468,7 @@ def prepare_next_live_key(
         image_write_timeout_s=image_write_timeout_s,
         request_id_factory=request_id_factory,
         registered_key_assistance=registered_key_assistance,
+        before_pose_admission=before_pose_admission,
         pose_only=capture_initial_visual is not None)
     visual_future = None
     visual_ready = None

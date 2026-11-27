@@ -505,19 +505,19 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
                         "key_prompt", "white plastic cylindrical key")
         if ("key_planning" in stages and
                 os.environ.get("PRECISION_PREWARM_FIXED_WORLD") == "1"):
-            prior_before_preflight = stages["key_planning"].get(
-                "before_preflight")
+            prior_before_pose_admission = stages["key_planning"].get(
+                "before_pose_admission")
 
-            def join_world_before_planning():
+            def join_world_before_pose_admission():
                 if warmup_future is not None:
                     with timed("startup.planner_fixed_world_warmup_wait",
                                phase="startup", kind="wait"):
                         warmup_future.result()
-                if prior_before_preflight is not None:
-                    prior_before_preflight()
+                if prior_before_pose_admission is not None:
+                    prior_before_pose_admission()
 
-            stages["key_planning"]["before_preflight"] = (
-                join_world_before_planning)
+            stages["key_planning"]["before_pose_admission"] = (
+                join_world_before_pose_admission)
         if "pickup" in stages and "executor" not in stages["pickup"]:
             # Use the same FR3 connection as clear-view and measured state.
             # This is the demo's completion-checked stock subclass; the

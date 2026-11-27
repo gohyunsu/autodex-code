@@ -36,7 +36,7 @@ _OWNED_CAPTURE_PARAMETERS = frozenset({
     "state_for_observation", "capture_root", "key_evidence_dir",
     "capture_id", "calibrated_camera_ids", "intrinsics_full",
     "extrinsics_full", "image_hw", "key_prompt", "view_limits",
-    "planner", "limits", "before_preflight",
+    "planner", "limits", "before_pose_admission", "before_preflight",
     "on_observation",
 })
 
@@ -57,6 +57,7 @@ class LiveKeyPlanningHandlers:
     limits: object
     key_prompt: str
     key_parameters: Mapping[str, object]
+    before_pose_admission: Callable[[], None] | None = None
     before_preflight: Callable[[], None] | None = None
     on_observed: Callable[[ObservedLiveKey], None] | None = None
     on_prepared: Callable[[PreparedLiveKeyTrial], None] | None = None
@@ -66,6 +67,8 @@ class LiveKeyPlanningHandlers:
     def __post_init__(self) -> None:
         if (not callable(self.state_for_observation) or
                 not callable(self.capture_id_factory) or
+                (self.before_pose_admission is not None and
+                 not callable(self.before_pose_admission)) or
                 (self.before_preflight is not None and
                  not callable(self.before_preflight)) or
                 (self.on_observed is not None and
@@ -132,6 +135,7 @@ class LiveKeyPlanningHandlers:
                 self.live, phase="initial_tabletop",
                 timeout_s=float(self.key_parameters["capture_timeout_s"]),
                 retain_original=False),
+            before_pose_admission=self.before_pose_admission,
             before_preflight=self.before_preflight,
             on_observation=self.on_observed,
             **dict(self.key_parameters))

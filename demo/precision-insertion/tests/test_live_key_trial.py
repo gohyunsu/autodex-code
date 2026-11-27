@@ -174,6 +174,18 @@ def test_live_key_capture_state_and_preflight_order(tmp_path, monkeypatch):
     assert result.preflight.status == "sampled_planning_pass"
 
 
+def test_remote_pose_capture_overlaps_warmup_but_local_render_waits(
+        tmp_path, monkeypatch):
+    arguments, events, _repre = _setup(tmp_path, monkeypatch)
+    result = trial.prepare_next_live_key(
+        **arguments,
+        before_pose_admission=lambda: events.append("gpu_warmup_joined"))
+
+    assert result.preflight.status == "sampled_planning_pass"
+    assert events.index("capture") < events.index("gpu_warmup_joined")
+    assert events.index("gpu_warmup_joined") < events.index("admit")
+
+
 def test_tracker_initializer_starts_after_pose_before_candidate_preflight(
         tmp_path, monkeypatch):
     arguments, events, _repre = _setup(tmp_path, monkeypatch)
