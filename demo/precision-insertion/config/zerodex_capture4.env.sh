@@ -99,6 +99,10 @@ export PRECISION_CAPTURE4_HOME=${PRECISION_CAPTURE4_HOME:-/home/capture4}
 export PRECISION_CAPTURE4_ADAPTER_DIR=${PRECISION_CAPTURE4_ADAPTER_DIR:-$PRECISION_CAPTURE4_HOME/precision_insertion_capture4_20261027}
 export PRECISION_CAPTURE4_ASSET_ROOT=${PRECISION_CAPTURE4_ASSET_ROOT:-$PRECISION_CAPTURE4_ADAPTER_DIR/cache/shared_data}
 export PRECISION_CAPTURE4_PROJECT_ROOT=${PRECISION_CAPTURE4_PROJECT_ROOT:-$PRECISION_CAPTURE4_HOME/shared_data/hyunsu/precision_insertion}
+# The capture4 rig is a shared, continuously running camera service owned by
+# its teleoperation controller. Precision insertion reads the same SHM frames
+# and health PUB without registering, rearming, stopping, or changing it.
+export PRECISION_ATTACH_CAMERAS=${PRECISION_ATTACH_CAMERAS:-1}
 export PRECISION_ZERODEX_FR3_FCI_IP=${PRECISION_ZERODEX_FR3_FCI_IP:-172.16.1.11}
 export PRECISION_ZERODEX_DAEMON_HOST=${PRECISION_ZERODEX_DAEMON_HOST:-127.0.0.1}
 export PRECISION_ROBOTIQ_HOST=${PRECISION_ROBOTIQ_HOST:-147.46.219.136}
