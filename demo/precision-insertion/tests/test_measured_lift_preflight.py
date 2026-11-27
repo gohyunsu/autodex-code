@@ -199,6 +199,27 @@ def test_cylinder_can_use_explicit_stock_nominal_chain_without_fake_bound(
         lift.verify_measured_lift_chain(report)
 
 
+def test_nominal_chain_accepts_parallel_gripper_relation_provenance(
+        tmp_path, monkeypatch):
+    args, _planned_calls, _log, _marker = _fixture(tmp_path, monkeypatch)
+    args["runner"].mode = select_mode("cylinder", 20)
+    args["bounds"] = None
+    result = lift.plan_measured_lift_chain(**args)
+    output = lift.write_measured_lift_chain(result, tmp_path / "nominal_chain")
+    report = output / "report.json"
+    saved = json.loads(report.read_text())
+    saved["relation_source"] = (
+        "initial_analytic_gripper_relation_without_future_surface_bound")
+    report.write_text(json.dumps(saved), encoding="utf-8")
+    assert lift.verify_measured_lift_chain(report)["status"] == (
+        lift.NOMINAL_UNBOUNDED_LIFT_STATUS)
+
+    saved["relation_source"] = "unrecognized_relation_source"
+    report.write_text(json.dumps(saved), encoding="utf-8")
+    with pytest.raises(ValueError, match="chain/margin proof"):
+        lift.verify_measured_lift_chain(report)
+
+
 def test_unbounded_nominal_chain_is_not_available_for_square(tmp_path, monkeypatch):
     args, planned_calls, _log, _marker = _fixture(tmp_path, monkeypatch)
     args["bounds"] = None

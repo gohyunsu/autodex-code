@@ -45,6 +45,11 @@ _NOMINAL_UNASSESSED_MARGIN = {
     "scope": "lift_only_transfer_and_axial_planned_after_lift",
 }
 
+_NOMINAL_UNBOUNDED_RELATION_SOURCES = {
+    "nominal_BODex_relation_without_future_surface_bound",
+    "initial_analytic_gripper_relation_without_future_surface_bound",
+}
+
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -370,8 +375,8 @@ def verify_measured_lift_chain(
                  (not isinstance(margin, dict) or
                   margin.get("sampled_margin_pass") is not True)) or
                 (report["status"] == NOMINAL_UNBOUNDED_LIFT_STATUS and
-                 (report.get("relation_source") !=
-                  "nominal_BODex_relation_without_future_surface_bound" or
+                 (report.get("relation_source") not in
+                  _NOMINAL_UNBOUNDED_RELATION_SOURCES or
                   margin != _NOMINAL_UNASSESSED_MARGIN or
                   not isinstance(report.get("endpoint"), dict) or
                   report["endpoint"].get("endpoint_pass") is not True))):
