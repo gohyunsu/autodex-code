@@ -215,3 +215,31 @@ def test_attached_camera_stream_rejects_nonrunning_health(monkeypatch):
         with attach_running_autodex_camera_stream(
                 ("capture1",), ("192.168.0.101",)):
             pytest.fail("nonrunning camera stream must not yield")
+
+
+def test_attached_camera_stream_accepts_capture4_legacy_health(monkeypatch):
+    class Socket:
+        def setsockopt(self, *args): pass
+        def connect(self, addr): pass
+        def recv_json(self):
+            return {
+                "controller": "vive_teleop_capture4_20261127_141521",
+                "cameras": [
+                    {"name": "26053248", "state": "CAPTURING",
+                     "frame_id": 59964, "fps": 30, "mode": "stream"},
+                    {"name": "25322639", "state": "CAPTURING",
+                     "frame_id": 59981, "fps": 30, "mode": "stream"},
+                ],
+            }
+        def close(self): pass
+    class Context:
+        def socket(self, kind): return Socket()
+        def term(self): pass
+    class Poller:
+        def register(self, sock, kind): self.sock = sock
+        def poll(self, timeout): return [(self.sock, 2)]
+    monkeypatch.setitem(sys.modules, "zmq", SimpleNamespace(
+        Context=Context, Poller=Poller, SUB=1, POLLIN=2, SUBSCRIBE=3, LINGER=4))
+    with attach_running_autodex_camera_stream(
+            ("capture4",), ("147.46.219.136",)) as statuses:
+        assert statuses["capture4"]["cameras"][0]["frame_id"] == 59964

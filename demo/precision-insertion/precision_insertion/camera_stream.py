@@ -174,6 +174,24 @@ def attach_running_autodex_camera_stream(
         if missing:
             raise RuntimeError(f"camera health unavailable on {sorted(missing)}")
         for pc, status in statuses.items():
+            # capture4's deployed camera server publishes the original health
+            # shape: controller + one row per camera.  Newer ParaDex servers
+            # publish running + summary instead.  Both describe the same
+            # already-owned stream; attaching must not register or rearm it.
+            legacy_cameras = status.get("cameras")
+            if isinstance(legacy_cameras, list):
+                ready = (
+                    status.get("controller") not in (None, "", "None") and
+                    bool(legacy_cameras) and
+                    all(isinstance(row, dict) and
+                        row.get("state") == "CAPTURING" and
+                        isinstance(row.get("frame_id"), int) and
+                        row["frame_id"] > 0
+                        for row in legacy_cameras))
+                if not ready:
+                    raise RuntimeError(
+                        f"existing camera stream is not ready on {pc}")
+                continue
             summary = status.get("summary", {})
             states = summary.get("states", {})
             if (status.get("running") is not True or
