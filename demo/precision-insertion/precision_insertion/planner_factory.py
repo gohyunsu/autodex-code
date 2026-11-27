@@ -43,7 +43,7 @@ def selected_fr3_planner_config_options(
         # time. All candidates are still visited through the existing chunk
         # loop, while each 32-seed IK graph avoids unused pose padding and
         # leaves VRAM for the subsequent motion graph.
-        **({"candidate_batch_size": 1}
+        **({"candidate_batch_size": 1, "motion_trajopt_seeds": 8}
            if selected.name == "robotiq_2f85" else {}),
     }
 

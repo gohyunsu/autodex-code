@@ -317,7 +317,8 @@ class GraspPlanner:
                  external_robot_configs_path: Optional[str] = None,
                  external_asset_path: Optional[str] = None,
                  use_hand_planner_defaults: bool = False,
-                 candidate_batch_size: Optional[int] = None):
+                 candidate_batch_size: Optional[int] = None,
+                 motion_trajopt_seeds: Optional[int] = None):
         if candidate_batch_size is not None:
             if (not isinstance(candidate_batch_size, int) or
                     isinstance(candidate_batch_size, bool) or
@@ -337,6 +338,12 @@ class GraspPlanner:
             self._collision_act_dist = 0.01
             self._num_trajopt_seeds = 1024
             self._interpolation_type = InterpolateType.LINEAR_CUDA
+        if motion_trajopt_seeds is not None:
+            if (not isinstance(motion_trajopt_seeds, int) or
+                    isinstance(motion_trajopt_seeds, bool) or
+                    motion_trajopt_seeds < 1):
+                raise ValueError("motion_trajopt_seeds must be a positive integer")
+            self._num_trajopt_seeds = motion_trajopt_seeds
         if robot_cfg_path is None:
             robot_cfg_path = os.path.join(robot_configs_path, robot_file)
             if hand_cfg_path is None:
@@ -516,7 +523,7 @@ class GraspPlanner:
             enable_graph_attempt=2,    # was 4 — fewer GP retries per call
             max_attempts=3,            # 20 -> 5 -> 3: failing plans exhaust attempts (slow); successes hit early
             enable_finetune_trajopt=True,
-            num_trajopt_seeds=32,
+            num_trajopt_seeds=self._num_trajopt_seeds,
             num_ik_seeds=32,
             timeout=60.0,
             parallel_finetune=True,
