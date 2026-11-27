@@ -118,10 +118,13 @@ same-session key pose.
 The host is running `6.8.1-1061-realtime`, `enp4s0` is up with
 `172.16.1.10/24`, and the selected route to `172.16.1.11` uses that interface.
 The latest read-only repeat resolved the robot at ARP and received an ICMP
-reply in 0.192 ms. Local daemon ports 5555 and 5556 were listening, but a
-state-only subscriber received no two advancing state packets within two
-seconds. Therefore network reachability is restored while an active
-daemon-to-FR3 state stream remains unverified; no robot command was issued.
+reply in 0.192 ms. A stale daemon occupied ports 5555/5556 without publishing
+state, so it was stopped and the existing capability-enabled local daemon was
+started without a motion command. It connected to FCI, reached `READY`, and
+two subscriber samples 120 ms apart had advancing robot uptime and finite
+seven-axis state. The FR3 state path is therefore live. Local cuRobo still
+requires `/dev/nvidia*` to be recreated after reboot; the installed NVIDIA
+modules alone are not sufficient.
 
 ## Evidence still required
 
