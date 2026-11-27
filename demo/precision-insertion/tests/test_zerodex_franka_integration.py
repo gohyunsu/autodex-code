@@ -88,12 +88,16 @@ def test_factory_routes_process_only_and_restores_after_close(tmp_path, monkeypa
     original = network_info["franka"]
     original_clear_view = FR3_CLEAR_VIEW.copy()
     observed = []
+    executor = SimpleNamespace()
     monkeypatch.setattr(route, "stock_factory", lambda options: (
         observed.append((network_info["franka"], FR3_CLEAR_VIEW.copy())) or
         LiveRuntimeIntegration(
-            clear_view=object(), build_components=lambda live: (),
+            clear_view=SimpleNamespace(executor=executor),
+            build_components=lambda live: (),
             close=lambda: observed.append(network_info["franka"]))))
     integration = route.factory(_options(tmp_path))
+    assert executor.streaming_clear_view_home is True
+    assert executor.clear_view_stream_speed == pytest.approx(0.2)
     assert network_info["franka"] == "127.0.0.1"
     np.testing.assert_allclose(FR3_CLEAR_VIEW, [0.1, -0.7, 0, -2.3, 0, 1.5, 0.7])
     integration.close()

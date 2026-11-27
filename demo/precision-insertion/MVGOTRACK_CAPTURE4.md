@@ -159,6 +159,15 @@ PRECISION_EXPERIMENT_PROFILE=mvgotrack_axis_alignment_capture4_remote_qwen.env.s
   bash demo/precision-insertion/run_zerodex_capture4.sh --run
 ```
 
+The ZeroDex integration opts the initial empty-hand clear-view return into the
+same continuous velocity-stream follower used by planned trajectories, at
+`0.2x`. The local daemon's blocking joint-position generator was observed to
+trip Franka's velocity/acceleration-discontinuity reflex at its first sample,
+even at a reduced `speed_scale`; the streamed route reached the measured
+clear-view target with `0.003 rad` maximum residual. This switch is scoped to
+the ZeroDex integration. AutoDex/Inspire outside this profile retain their
+existing home behavior.
+
 The profile enables XY and axis correction and keeps the ordinary 10 mm
 per-motion XY discretization. It does not change the VLM-only final label or
 the 20 mm insertion target.

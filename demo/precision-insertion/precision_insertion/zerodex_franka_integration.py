@@ -158,6 +158,15 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
         FR3_CLEAR_VIEW[:] = previous_clear_view
         raise
 
+    # The ZeroDex daemon's blocking joint-position generator can trip Franka's
+    # velocity/acceleration-discontinuity reflex at its first control sample.
+    # Use the already commissioned continuous follower for initial clear-view
+    # recovery. AutoDex and non-ZeroDex integrations retain blocking home.
+    executor = getattr(integration.clear_view, "executor", None)
+    if executor is not None:
+        executor.streaming_clear_view_home = True
+        executor.clear_view_stream_speed = 0.2
+
     def close() -> None:
         try:
             integration.close()

@@ -304,3 +304,52 @@ def test_blocking_move_reports_daemon_reflex_instead_of_target_error():
     executor._last_release_wrist_reference = None
     with pytest.raises(RuntimeError, match=r"home: FR3 move command failed \(cartesian_reflex\)"):
         executor._move_to(np.zeros(7), what="home")
+
+
+def test_opt_in_clear_view_home_uses_continuous_follower():
+    try:
+        from src.execution.franka_executor import FrankaExecutor
+    except RuntimeError as exc:
+        if "No CUDA GPUs are available" not in str(exc):
+            raise
+        pytest.skip("stock FrankaExecutor import requires CUDA")
+
+    class Arm:
+        def __init__(self):
+            self.q = np.zeros(7)
+
+        def get_data(self):
+            return {"qpos": self.q.copy()}
+
+    arm = Arm()
+    executor = object.__new__(FrankaExecutor)
+    executor.arm = arm
+    executor._log = lambda _label: None
+    executor._move_hand = lambda _target: None
+    executor._convert = lambda value: value
+    executor._hand_init = np.zeros(1)
+    executor._last_hand_qpos = np.ones(1)
+    executor._clear_view = np.full(7, 0.1)
+    executor._arm_init = np.full(7, -0.1)
+    executor.streaming_clear_view_home = True
+    executor.clear_view_stream_speed = 0.2
+    executor.land_tol = 0.02
+    executor._last_release_wrist_reference = object()
+    executor._pending_post_release_retract = object()
+    followed = {}
+
+    def follow(path, *, speed):
+        followed["path"] = np.asarray(path)
+        followed["speed"] = speed
+        arm.q = followed["path"][-1].copy()
+
+    executor._follow = follow
+    executor._move_to = lambda *_args, **_kwargs: pytest.fail(
+        "streaming clear-view mode must not use blocking move_to_qpos")
+    executor.home(clear_view=True)
+    assert followed["speed"] == pytest.approx(0.2)
+    np.testing.assert_allclose(followed["path"][0], np.zeros(7))
+    np.testing.assert_allclose(followed["path"][-1], executor._clear_view)
+    assert executor.land_tol == pytest.approx(0.02)
+    assert executor._last_release_wrist_reference is None
+    assert executor._pending_post_release_retract is None

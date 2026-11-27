@@ -27,6 +27,7 @@ Execution sequence (identical to real.py):
 from __future__ import annotations
 
 import datetime
+import math
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional, TYPE_CHECKING
@@ -131,6 +132,12 @@ class FrankaExecutor:
         self.gripper_speed_m_s = float(gripper_speed_m_s)
         self.squeeze_level = squeeze_level
         self.arm_speed_scale = arm_speed_scale   # free-space blocking-move speed (home)
+        # AutoDex keeps its historical blocking home by default. A machine
+        # integration whose daemon cannot start that position generator
+        # continuously may opt into the same velocity-stream follower used by
+        # planned trajectories. ZeroDex enables this process-locally.
+        self.streaming_clear_view_home = False
+        self.clear_view_stream_speed = 0.2
         self.ctrl_dt = ctrl_dt                   # velocity-stream command period (s)
         self.joint_vmax = joint_vmax             # per-joint velocity clip (rad/s)
         self.pos_kp = pos_kp                     # velocity gain toward the target (1/s)
@@ -1191,7 +1198,29 @@ class FrankaExecutor:
         # speed cap remains after that command.
         self._holding_object = False
         target = self._clear_view if clear_view else self._arm_init
-        self._move_to(target, what="home")
+        if clear_view and self.streaming_clear_view_home:
+            state = self.arm.get_data()
+            current = None if state is None else state.get("qpos")
+            if current is None:
+                raise RuntimeError("home: FR3 state unavailable before clear view")
+            current = np.asarray(current, dtype=np.float64)[:7]
+            delta = float(np.max(np.abs(target - current)))
+            waypoint_count = max(2, int(np.ceil(delta / 0.005)) + 1)
+            previous_land_tol = self.land_tol
+            self.land_tol = math.inf
+            try:
+                self._follow(
+                    np.linspace(current, target, waypoint_count),
+                    speed=self.clear_view_stream_speed)
+            finally:
+                self.land_tol = previous_land_tol
+            final = self.arm.get_data()
+            final_q = None if final is None else final.get("qpos")
+            if (final_q is None or
+                    np.max(np.abs(np.asarray(final_q)[:7] - target)) > 0.04):
+                raise RuntimeError("home: streamed clear-view move did not complete")
+        else:
+            self._move_to(target, what="home")
         self._last_release_wrist_reference = None
         self._pending_post_release_retract = None
 
