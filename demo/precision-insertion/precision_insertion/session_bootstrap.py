@@ -100,6 +100,8 @@ def bootstrap_session(
     socket_perception_mode: str = "iou",
     scene_mode: str = "charuco_board",
     table_surface_z_m: float | None = None,
+    table_surface_point_robot_m: np.ndarray | None = None,
+    table_surface_normal_robot: np.ndarray | None = None,
 ) -> SessionBootstrap:
     """Admit socket observations, then freeze one AutoDex world.
 
@@ -117,11 +119,16 @@ def bootstrap_session(
                              board_frame_evidence is not None))):
         raise ValueError("board capture does not match scene mode")
     if socket_perception_mode not in ("iou", "ignore_sil_loss",
-                                      "board_constrained_body"):
+                                      "board_constrained_body",
+                                      "table_constrained_body"):
         raise ValueError("unknown socket perception mode")
+    body_constrained = socket_perception_mode in (
+        "board_constrained_body", "table_constrained_body")
     if board_free and (socket_perception_mode == "board_constrained_body" or
                        socket_refiner is None):
-        raise ValueError("board-free socket needs stock FoundPose refinement")
+        raise ValueError("board-free socket needs table-constrained or FoundPose refinement")
+    if not board_free and socket_perception_mode == "table_constrained_body":
+        raise ValueError("ChArUco socket cannot use a board-free table fit")
     if not board_free:
         _request_id(board_request_id, "board")
     if board_timestamp_source != ("not_applicable" if board_free else "camera_acquisition"):
@@ -191,7 +198,7 @@ def bootstrap_session(
                 pose_fid = capture.poses.get(camera_id, {}).get("frame_id")
                 if (pose_fid is not None and mask_fid != pose_fid):
                     raise ValueError("socket SAM/FoundPose frame IDs differ")
-                if socket_perception_mode != "board_constrained_body" and (
+                if not body_constrained and (
                         mask_fid != pose_fid):
                     raise ValueError("socket SAM/FoundPose frame IDs differ")
                 frame_ids[camera_id] = mask_fid
@@ -215,12 +222,12 @@ def bootstrap_session(
                 frame_timestamps_s=capture.frame_timestamps_s,
                 frame_timestamp_source=capture.frame_timestamp_source,
                 calibrated_camera_ids=calibrated_camera_ids, limits=view_limits,
-                admission_mode=("mask_only" if socket_perception_mode ==
-                                "board_constrained_body" else "foundpose"))
+                admission_mode=("mask_only" if body_constrained else
+                                "foundpose"))
         admissions.append(admission)
         if socket_refiner is not None:
-            with timed(("socket.body_fit" if socket_perception_mode ==
-                        "board_constrained_body" else "socket.refine_capture"),
+            with timed(("socket.body_fit" if body_constrained else
+                        "socket.refine_capture"),
                        phase="socket",
                        capture_id=capture_id):
                 refined = socket_refiner(capture, admission)
@@ -255,6 +262,8 @@ def bootstrap_session(
             board_capture_phase=board_capture_phase,
             measured_board=measured_board,
             scene_mode=scene_mode, table_surface_z_m=table_surface_z_m,
+            table_surface_point_robot_m=table_surface_point_robot_m,
+            table_surface_normal_robot=table_surface_normal_robot,
         )
     return SessionBootstrap(
         calibration, board_request_id, board_images_bgr, board_timestamps_s,

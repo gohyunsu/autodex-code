@@ -283,7 +283,8 @@ def test_stock_socket_perception_mode_is_explicit_in_launch(tmp_path):
         launch.load_session_launch(config)
 
 
-def test_board_free_launch_requires_explicit_height_and_foundpose(tmp_path):
+def test_board_free_launch_requires_explicit_height_and_support_mode(
+        tmp_path, monkeypatch):
     config, record = _config(tmp_path)
     record.pop("camera_time_calibrations")
     record["camera_time_mode"] = "bounded_request_interval"
@@ -303,8 +304,26 @@ def test_board_free_launch_requires_explicit_height_and_foundpose(tmp_path):
     assert loaded.minimum_socket_refined_iou == 0.0
     record["socket_perception_mode"] = "board_constrained_body"
     config.write_text(json.dumps(record), encoding="utf-8")
-    with pytest.raises(ValueError, match="board-free scene needs FoundPose"):
+    with pytest.raises(ValueError, match="table-constrained or FoundPose"):
         launch.load_session_launch(config)
+    mode = select_mode("cylinder", 20)
+    paths = AssetPaths(Path(record["shared_root"]), mode)
+    for path in (paths.raw_mesh(mode.socket_object),
+                 paths.socket_collision_mesh):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("test asset", encoding="utf-8")
+    monkeypatch.setattr(launch, "validate_cylinder_socket_fixture",
+                        lambda **_kwargs: {
+                            "paths_bound_to_shared_root": True})
+    record["mode"] = {"family": "cylinder", "gap_mm": 20}
+    record["socket_perception_mode"] = "table_constrained_body"
+    record["table_surface_point_robot_m"] = [0.0, 0.0, .04]
+    record["table_surface_normal_robot"] = [0.01, 0.0, 1.0]
+    config.write_text(json.dumps(record), encoding="utf-8")
+    loaded = launch.load_session_launch(config)
+    assert loaded.socket_perception_mode == "table_constrained_body"
+    assert loaded.table_surface_point_robot_m.tolist() == [0.0, 0.0, .04]
+    assert loaded.table_surface_normal_robot[2] > .999
 
 
 def test_board_9_partial_corner_contract_is_explicit(tmp_path):

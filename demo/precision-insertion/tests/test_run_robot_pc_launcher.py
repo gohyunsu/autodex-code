@@ -154,7 +154,9 @@ def test_run_launcher_defaults_to_measured_board_free_table(tmp_path):
         (run_root / "_control/board_free/launch_board_free.json").read_text(
             encoding="utf-8"))
     assert effective["scene_mode"] == "board_free"
-    assert effective["socket_perception_mode"] == "ignore_sil_loss"
+    assert effective["socket_perception_mode"] == "table_constrained_body"
+    assert effective["table_surface_point_robot_m"] == [0.0, 0.0, effective["table_surface_z_m"]]
+    assert effective["table_surface_normal_robot"] == [0.0, 0.0, 1.0]
     assert effective["table_surface_z_m"] == 0.06336083895817991
     for key in ("board_id", "minimum_board_corners", "board_capture_phase",
                 "board_fit_camera_ids"):

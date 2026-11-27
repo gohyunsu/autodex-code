@@ -1,4 +1,4 @@
-"""Fit an upright fixed socket from its acquired SAM masks and board plane.
+"""Fit an upright fixed socket from its acquired SAM masks and support plane.
 
 The socket's wide flange is not consistently included in SAM masks.  Fit the
 visible cylindrical wall instead of applying a whole-mesh silhouette loss to
@@ -91,16 +91,17 @@ def _region_iou(hull: np.ndarray, mask: np.ndarray,
     return float(intersection / union) if union else 0.0
 
 
-def fit_board_socket_body(
+def fit_support_surface_socket_body(
     *, masks: Mapping[str, np.ndarray],
     intrinsics_undist: Mapping[str, np.ndarray],
     extrinsics_camera_world: Mapping[str, np.ndarray],
-    c2r: np.ndarray, board_pose_robot: np.ndarray, raw_mesh: Path,
+    c2r: np.ndarray, support_pose_robot: np.ndarray, raw_mesh: Path,
+    support_source: str = "measured_support_surface",
 ) -> tuple[np.ndarray, dict]:
     """Return world socket pose and per-view wall IoU from saved frame masks.
 
-    The rigid fixture sits on the measured board and has its open axis along
-    the board normal.  Each mask centroid supplies a board-plane intersection
+    The rigid fixture sits on the measured support surface and has its open
+    axis along the support normal. Each mask centroid supplies a plane intersection
     at the height of the mask region (wall, flange or their union). Region
     choice uses the known mesh silhouette and the acquired mask, not another
     learned model or a new pass/fail threshold. One median over every
@@ -111,11 +112,11 @@ def fit_board_socket_body(
     if (not masks or set(masks) != set(intrinsics_undist) or
             set(masks) != set(extrinsics_camera_world)):
         raise ValueError("socket wall fit requires matching calibrated views")
-    board = validate_se3(board_pose_robot, name="measured board pose")
+    support = validate_se3(support_pose_robot, name="measured support pose")
     world_robot = validate_se3(c2r, name="C2R")
-    up = -board[:3, 2]
-    x_axis = board[:3, 0]
-    y_axis = np.cross(up, x_axis)
+    up = support[:3, 2]
+    x_axis = support[:3, 0]
+    y_axis = support[:3, 1]
     rotation = np.column_stack((x_axis, y_axis, up))
     with timed("socket.body_mesh_dimensions", phase="socket", kind="geometry"):
         xyz = _mesh_vertices(raw_mesh)
@@ -133,7 +134,7 @@ def fit_board_socket_body(
             models["whole_body"] = (
                 np.vstack((models["wall"][0], flange)),
                 (flange_bottom + top) / 2.0)
-    board_points: list[np.ndarray] = []
+    support_points: list[np.ndarray] = []
     views = []
     selected_regions: dict[str, str] = {}
     hypothesis_iou: dict[str, dict[str, float]] = {}
@@ -162,18 +163,18 @@ def fit_board_socket_body(
             estimates = {}
             for region, (rings, height) in models.items():
                 distance = float(np.dot(
-                    board[:3, 3] + height * up - origin, up) / denominator)
+                    support[:3, 3] + height * up - origin, up) / denominator)
                 if distance <= 0:
                     raise ValueError(f"socket mask ray points behind camera: {camera}")
                 guess = origin + distance * ray - height * up
                 xy_guess = np.asarray([
-                    (guess - board[:3, 3]) @ x_axis,
-                    (guess - board[:3, 3]) @ y_axis])
+                    (guess - support[:3, 3]) @ x_axis,
+                    (guess - support[:3, 3]) @ y_axis])
 
                 def hull_at(xy: np.ndarray) -> np.ndarray:
                     pose = np.eye(4)
                     pose[:3, :3] = rotation
-                    pose[:3, 3] = (board[:3, 3] + xy[0] * x_axis
+                    pose[:3, 3] = (support[:3, 3] + xy[0] * x_axis
                                    + xy[1] * y_axis)
                     return _project_hull(rings, pose, E, K)
 
@@ -190,7 +191,7 @@ def fit_board_socket_body(
                     hull_at(aligned_xy), mask, mask_bounds)
             selected = max(scores, key=scores.__getitem__)
             chosen_xy = estimates[selected]
-            board_points.append(board[:3, 3] + chosen_xy[0] * x_axis
+            support_points.append(support[:3, 3] + chosen_xy[0] * x_axis
                                 + chosen_xy[1] * y_axis)
             views.append((camera, mask, K, E, mask_bounds))
             selected_regions[camera] = selected
@@ -198,13 +199,13 @@ def fit_board_socket_body(
 
     with timed("socket.body_multiview_median", phase="socket",
                kind="geometry", camera_count=len(views)):
-        points = np.asarray(board_points)
-        xy = np.column_stack(((points - board[:3, 3]) @ x_axis,
-                              (points - board[:3, 3]) @ y_axis))
+        points = np.asarray(support_points)
+        xy = np.column_stack(((points - support[:3, 3]) @ x_axis,
+                              (points - support[:3, 3]) @ y_axis))
         median_xy = np.median(xy, axis=0)
         pose_robot = np.eye(4)
         pose_robot[:3, :3] = rotation
-        pose_robot[:3, 3] = (board[:3, 3] + median_xy[0] * x_axis
+        pose_robot[:3, 3] = (support[:3, 3] + median_xy[0] * x_axis
                              + median_xy[1] * y_axis)
 
     per_view = {}
@@ -215,7 +216,8 @@ def fit_board_socket_body(
             per_view[camera] = _region_iou(
                 _project_hull(rings, pose_robot, E, K), mask, mask_bounds)
     diagnostics = {
-        "method": "board_normal_mesh_region_mask_all_view_median",
+        "method": "support_normal_mesh_region_mask_all_view_median",
+        "support_source": support_source,
         "body_radius_m": radius, "body_bottom_z_m": bottom,
         "body_top_z_m": top, "per_view_iou": per_view,
         "flange_radius_m": flange_radius,
@@ -224,7 +226,7 @@ def fit_board_socket_body(
         "per_view_selected_region": selected_regions,
         "per_view_region_iou": hypothesis_iou,
         "mean_body_iou": float(np.mean(list(per_view.values()))),
-        "per_view_board_xy_m": {
+        "per_view_support_xy_m": {
             camera: xy[index].tolist() for index, camera in enumerate(sorted(masks))},
         "socket_pose_camera_ids": sorted(masks),
         "socket_pose_aggregation": {
@@ -232,7 +234,34 @@ def fit_board_socket_body(
             "camera_count": len(masks),
             "scope": "no_camera_center_consistency_comparison_or_selection",
         },
-        "board_xy_m": median_xy.tolist(),
+        "support_xy_m": median_xy.tolist(),
     }
     return validate_se3(world_robot @ pose_robot,
-                        name="board-constrained socket pose"), diagnostics
+                        name="support-constrained socket pose"), diagnostics
+
+
+def fit_board_socket_body(
+    *, masks: Mapping[str, np.ndarray],
+    intrinsics_undist: Mapping[str, np.ndarray],
+    extrinsics_camera_world: Mapping[str, np.ndarray],
+    c2r: np.ndarray, board_pose_robot: np.ndarray, raw_mesh: Path,
+) -> tuple[np.ndarray, dict]:
+    """Compatibility wrapper for the ChArUco-supported cylinder route."""
+    board = validate_se3(board_pose_robot, name="measured board pose")
+    up = -board[:3, 2]
+    support = np.eye(4)
+    support[:3, 0] = board[:3, 0]
+    support[:3, 1] = np.cross(up, support[:3, 0])
+    support[:3, 2] = up
+    support[:3, 3] = board[:3, 3]
+    pose, diagnostics = fit_support_surface_socket_body(
+        masks=masks, intrinsics_undist=intrinsics_undist,
+        extrinsics_camera_world=extrinsics_camera_world, c2r=c2r,
+        support_pose_robot=support, raw_mesh=raw_mesh,
+        support_source="measured_charuco_board")
+    # Preserve legacy diagnostic keys for saved AutoDex/board evidence.
+    diagnostics["method"] = "board_normal_mesh_region_mask_all_view_median"
+    diagnostics["per_view_board_xy_m"] = diagnostics.pop(
+        "per_view_support_xy_m")
+    diagnostics["board_xy_m"] = diagnostics.pop("support_xy_m")
+    return pose, diagnostics

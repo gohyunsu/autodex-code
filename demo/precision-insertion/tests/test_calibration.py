@@ -201,7 +201,9 @@ def test_board_free_socket_reuses_handeye_and_fresh_foundpose_without_board(
     result = calibrate_session(**args)
     assert "board" not in result.record
     assert result.record["support_surface"] == {
-        "source": "configured_table_surface", "table_surface_z_m": .04}
+        "source": "configured_table_surface", "table_surface_z_m": .04,
+        "plane_point_robot_m": [0.0, 0.0, .04],
+        "normal_robot": [0.0, 0.0, 1.0]}
     assert result.record["socket_pose_source"] == (
         "per_capture_stock_multiview_refinement")
     assert result.record["c2r"] == args["c2r"].tolist()

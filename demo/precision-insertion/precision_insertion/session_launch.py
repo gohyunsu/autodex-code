@@ -77,6 +77,8 @@ class SessionLaunch:
     fixture_contract_validated: bool = False
     scene_mode: str = "charuco_board"
     table_surface_z_m: float | None = None
+    table_surface_point_robot_m: np.ndarray | None = None
+    table_surface_normal_robot: np.ndarray | None = None
     upright_cylinder_only: bool = True
 
     def readiness(self) -> dict:
@@ -96,6 +98,12 @@ class SessionLaunch:
             "execution_scope": self.execution_scope,
             "scene_mode": self.scene_mode,
             "table_surface_z_m": self.table_surface_z_m,
+            "table_surface_point_robot_m": (
+                self.table_surface_point_robot_m.tolist()
+                if self.table_surface_point_robot_m is not None else None),
+            "table_surface_normal_robot": (
+                self.table_surface_normal_robot.tolist()
+                if self.table_surface_normal_robot is not None else None),
             "minimum_socket_refined_iou": self.minimum_socket_refined_iou,
             "socket_perception_mode": self.socket_perception_mode,
             "socket_capture_count": self.socket_capture_count,
@@ -157,6 +165,8 @@ class OpenSessionCameras:
             board_fit_camera_ids=launch.board_fit_camera_ids,
             scene_mode=launch.scene_mode,
             table_surface_z_m=launch.table_surface_z_m,
+            table_surface_point_robot_m=launch.table_surface_point_robot_m,
+            table_surface_normal_robot=launch.table_surface_normal_robot,
             fixture_contract_validated=launch.fixture_contract_validated,
             confirm_socket_placement=confirm_socket_placement)
 
@@ -239,11 +249,28 @@ def load_session_launch(
     if scene_mode not in ("charuco_board", "board_free"):
         raise ValueError("unknown scene mode")
     table_surface_z_m = record.get("table_surface_z_m")
+    table_surface_point_robot_m = None
+    table_surface_normal_robot = None
     if scene_mode == "board_free":
         if (type(table_surface_z_m) not in (int, float) or
                 not math.isfinite(table_surface_z_m)):
             raise ValueError("board-free scene needs an explicit table_surface_z_m")
         table_surface_z_m = float(table_surface_z_m)
+        table_surface_point_robot_m = np.asarray(record.get(
+            "table_surface_point_robot_m",
+            [0.0, 0.0, table_surface_z_m]), dtype=float)
+        table_surface_normal_robot = np.asarray(record.get(
+            "table_surface_normal_robot", [0.0, 0.0, 1.0]), dtype=float)
+        if (table_surface_point_robot_m.shape != (3,) or
+                table_surface_normal_robot.shape != (3,) or
+                not np.all(np.isfinite(table_surface_point_robot_m)) or
+                not np.all(np.isfinite(table_surface_normal_robot)) or
+                np.linalg.norm(table_surface_normal_robot) < 1e-9):
+            raise ValueError("board-free scene needs a finite measured table plane")
+        table_surface_normal_robot /= np.linalg.norm(
+            table_surface_normal_robot)
+        if table_surface_normal_robot[2] < 0:
+            table_surface_normal_robot = -table_surface_normal_robot
     elif table_surface_z_m is not None:
         raise ValueError("ChArUco mode measures its own table surface")
     board_id = (record.get("board_id", "11") if scene_mode == "charuco_board"
@@ -355,7 +382,8 @@ def load_session_launch(
     socket_perception_mode = record.get("socket_perception_mode", "iou")
     required = [("socket raw mesh", paths.raw_mesh(mode.socket_object)),
                 ("socket collision mesh", paths.socket_collision_mesh)]
-    if socket_perception_mode != "board_constrained_body":
+    body_modes = {"board_constrained_body", "table_constrained_body"}
+    if socket_perception_mode not in body_modes:
         required.append(("socket FoundPose representation",
                          paths.foundpose_repre(mode.socket_object)))
     for name, asset in required:
@@ -371,13 +399,16 @@ def load_session_launch(
         raise ValueError("socket needs a capture and a specific SAM prompt")
     reject_incorrect_object_color(prompt)
     if socket_perception_mode not in ("iou", "ignore_sil_loss",
-                                      "board_constrained_body"):
+                                      "board_constrained_body",
+                                      "table_constrained_body"):
         raise ValueError("unknown socket perception mode")
     if scene_mode == "board_free" and socket_perception_mode == "board_constrained_body":
-        raise ValueError("board-free scene needs FoundPose socket perception")
-    if socket_perception_mode == "board_constrained_body" and mode.family != "cylinder":
+        raise ValueError("board-free scene needs table-constrained or FoundPose socket perception")
+    if scene_mode == "charuco_board" and socket_perception_mode == "table_constrained_body":
+        raise ValueError("ChArUco scene needs board-constrained or FoundPose socket perception")
+    if socket_perception_mode in body_modes and mode.family != "cylinder":
         raise ValueError(
-            "board-constrained body fit is only for the fixed cylinder socket")
+            "support-constrained body fit is only for the fixed cylinder socket")
     values = {name: _positive(record.get(name), name=name) for name in (
         "board_timeout_s", "socket_timeout_s", "image_write_timeout_s",
         "max_socket_translation_mm", "max_socket_angle_deg")}
@@ -401,6 +432,8 @@ def load_session_launch(
         board_capture_phase=board_capture_phase,
         board_fit_camera_ids=board_fit_ids,
         scene_mode=scene_mode, table_surface_z_m=table_surface_z_m,
+        table_surface_point_robot_m=table_surface_point_robot_m,
+        table_surface_normal_robot=table_surface_normal_robot,
         camera_time_mode=time_mode, execution_scope=execution_scope,
         camera_acquisition_mode=acquisition_mode,
         init_frame_transport=init_frame_transport,

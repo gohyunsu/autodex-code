@@ -103,7 +103,7 @@ if [[ "$MODE" == --check ]]; then
   CHECK_LAUNCH=$(mktemp /tmp/precision-launch-check.XXXXXX.json)
   trap 'rm -f "$CHECK_LAUNCH"' EXIT
   "$CHECK_PY" - "$LAUNCH_TEMPLATE" "$CHECK_LAUNCH" "$GAP_MM" "$SCENE_MODE" \
-    "$TABLE_SURFACE_Z_M" "$CAMERA_IDS" "$BOARD_FIT_CAMERA_IDS" \
+    "$TABLE_SURFACE_Z_M" "$TABLE_PLANE_CONFIG" "$CAMERA_IDS" "$BOARD_FIT_CAMERA_IDS" \
     "$CALIB_DIR" "$C2R_NPY" <<'PY'
 import json
 from pathlib import Path
@@ -111,8 +111,8 @@ import sys
 
 record = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 record["mode"] = {"family": "cylinder", "gap_mm": int(sys.argv[3])}
-scene_mode, table_z = sys.argv[4:6]
-camera_ids, board_fit_camera_ids, calib_dir, c2r_npy = sys.argv[6:10]
+scene_mode, table_z, table_config = sys.argv[4:7]
+camera_ids, board_fit_camera_ids, calib_dir, c2r_npy = sys.argv[7:11]
 if camera_ids:
     record["camera_ids"] = [value.strip() for value in camera_ids.split(",")
                             if value.strip()]
@@ -125,10 +125,16 @@ if calib_dir:
 if c2r_npy:
     record["c2r_npy"] = c2r_npy
 record["scene_mode"] = scene_mode
-record["socket_perception_mode"] = ("ignore_sil_loss" if scene_mode == "board_free"
+record["socket_perception_mode"] = ("table_constrained_body" if scene_mode == "board_free"
                                     else "board_constrained_body")
 if scene_mode == "board_free":
     record["table_surface_z_m"] = float(table_z)
+    plane = (json.loads(Path(table_config).read_text(encoding="utf-8"))
+             if table_config else {})
+    record["table_surface_point_robot_m"] = plane.get(
+        "plane_point_robot_m", [0.0, 0.0, float(table_z)])
+    record["table_surface_normal_robot"] = plane.get(
+        "normal_robot", [0.0, 0.0, 1.0])
     for key in ("board_id", "minimum_board_corners", "board_capture_phase",
                 "board_fit_camera_ids"):
         record.pop(key, None)
@@ -165,7 +171,7 @@ fi
 LAUNCH="$LAUNCH_DIR/launch_$RUN_TAG.json"
 "$CHECK_PY" - "$LAUNCH_TEMPLATE" "$LAUNCH" "$RUN_TAG" "$GAP_MM" \
   "${PRECISION_REUSE_SESSION_EVIDENCE:-}" "$LAUNCH_DIR" "$SCENE_MODE" "$TABLE_SURFACE_Z_M" \
-  "$CAPTURE_ROOT" "$CAMERA_IDS" "$BOARD_FIT_CAMERA_IDS" \
+  "$TABLE_PLANE_CONFIG" "$CAPTURE_ROOT" "$CAMERA_IDS" "$BOARD_FIT_CAMERA_IDS" \
   "$CALIB_DIR" "$C2R_NPY" <<'PY'
 import json
 from pathlib import Path
@@ -173,8 +179,8 @@ import sys
 
 template, output, run_tag = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 gap_mm, reused_evidence, launch_dir = int(sys.argv[4]), sys.argv[5], Path(sys.argv[6])
-scene_mode, table_z, capture_root = sys.argv[7:10]
-camera_ids, board_fit_camera_ids, calib_dir, c2r_npy = sys.argv[10:14]
+scene_mode, table_z, table_config, capture_root = sys.argv[7:11]
+camera_ids, board_fit_camera_ids, calib_dir, c2r_npy = sys.argv[11:15]
 record = json.loads(template.read_text(encoding="utf-8"))
 record["mode"] = {"family": "cylinder", "gap_mm": gap_mm}
 if camera_ids:
@@ -190,10 +196,16 @@ if c2r_npy:
     record["c2r_npy"] = c2r_npy
 record["capture_root"] = capture_root
 record["scene_mode"] = scene_mode
-record["socket_perception_mode"] = ("ignore_sil_loss" if scene_mode == "board_free"
+record["socket_perception_mode"] = ("table_constrained_body" if scene_mode == "board_free"
                                     else "board_constrained_body")
 if scene_mode == "board_free":
     record["table_surface_z_m"] = float(table_z)
+    plane = (json.loads(Path(table_config).read_text(encoding="utf-8"))
+             if table_config else {})
+    record["table_surface_point_robot_m"] = plane.get(
+        "plane_point_robot_m", [0.0, 0.0, float(table_z)])
+    record["table_surface_normal_robot"] = plane.get(
+        "normal_robot", [0.0, 0.0, 1.0])
     for key in ("board_id", "minimum_board_corners", "board_capture_phase",
                 "board_fit_camera_ids"):
         record.pop(key, None)

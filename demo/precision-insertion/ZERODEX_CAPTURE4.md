@@ -1947,3 +1947,24 @@ and still does not terminate the episode; it selects the unchanged nominal
 insertion route requested for this experiment. This correction has unit and
 full-suite coverage but still requires the next live episode for physical
 validation.
+
+## 2026-11-27 board-free fixed-socket estimator
+
+The default ZeroDex launch no longer runs socket FoundPose. It loads the
+commissioned four-camera extrinsics and the saved support plane, segments the
+fixed cylindrical socket in every view with the existing SAM service, and
+fits the known socket body jointly in that plane. The fitted transform uses
+the measured plane normal as the socket axis; axial yaw is intentionally
+unobservable and irrelevant for the cylindrical fixture. This is the
+board-free counterpart of the older board-constrained body fit, not a new
+acceptance layer. The existing per-view body IoUs are retained as diagnostics
+and the ZeroDex profile keeps its zero IoU veto.
+
+The fresh 5 mm-gap diagnostic produced robot-frame origin
+`[0.559026, 0.105217, 0.063251] m`, socket axis
+`[-0.011407, -0.001576, 0.999934]`, and mean four-view body IoU `0.9273`.
+The frozen calibration records
+`socket_pose_source=per_capture_table_constrained_body` and reloads without
+socket FoundPose assets. The key happened to be visible in this diagnostic;
+normal operation still captures the socket once with the key absent and then
+starts per-trial key perception and tracking.

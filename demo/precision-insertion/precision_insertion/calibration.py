@@ -210,8 +210,9 @@ def load_session_calibration(
                 not math.isfinite(board["table_surface_z_m"]) or
                 record.get("board") is not None or
                 record.get("board_timestamp_source") is not None or
-                record.get("socket_pose_source") !=
-                "per_capture_stock_multiview_refinement"):
+                record.get("socket_pose_source") not in (
+                    "per_capture_stock_multiview_refinement",
+                    "per_capture_table_constrained_body")):
             raise ValueError("board-free support surface is invalid")
     elif record.get("board_timestamp_source") != "camera_acquisition":
         raise ValueError("saved ChArUco timestamp source is invalid")
@@ -237,12 +238,15 @@ def load_session_calibration(
     validate_se3(record.get("c2r"), name="saved C2R")
     socket_pose = validate_se3(record.get("socket_pose_robot"),
                                name="saved socket pose")
+    if record.get("socket_pose_source") == "per_capture_table_constrained_body":
+        _check_table_supported_socket(socket_pose, board)
     diagnostics = record.get("socket_diagnostics")
     if not isinstance(diagnostics, dict) or diagnostics.get("accepted") is not True:
         raise ValueError("saved socket calibration was not accepted")
     if record.get("socket_pose_source") in (
             "per_capture_stock_multiview_refinement",
-            "per_capture_board_constrained_body"):
+            "per_capture_board_constrained_body",
+            "per_capture_table_constrained_body"):
         _verify_saved_socket_refinements(
             record, mode=mode, shared_root=shared_root, socket_pose=socket_pose)
     elif record.get("socket_pose_source") not in (None, "per_view_foundpose_legacy"):
@@ -307,6 +311,20 @@ def _check_board_supported_socket(pose_robot: np.ndarray, board: dict) -> None:
         raise ValueError("socket is not supported upright on measured board")
 
 
+def _check_table_supported_socket(pose_robot: np.ndarray, support: dict) -> None:
+    """Check the fixture against the saved measured plane, without a new gate."""
+    from .table_surface import support_frame_from_plane
+
+    fixture = validate_se3(pose_robot, name="table-supported socket")
+    frame = support_frame_from_plane(
+        support.get("plane_point_robot_m"), support.get("normal_robot"))
+    normal = frame[:3, 2]
+    if (not np.allclose(fixture[:3, 2], normal, atol=1e-6) or
+            abs(float(np.dot(
+                fixture[:3, 3] - frame[:3, 3], normal))) > 1e-6):
+        raise ValueError("socket is not supported upright on measured table")
+
+
 def _check_body_fit_scores(
     per_view: dict, selection: dict, threshold: float,
 ) -> None:
@@ -345,8 +363,10 @@ def _verify_saved_socket_refinements(
             record.get("socket_capture_refinements_sha256") !=
             _canonical_sha256({"refinements": refinements})):
         raise ValueError("saved socket refinements changed or are missing")
-    expected_board_body = (record["socket_pose_source"] ==
-                           "per_capture_board_constrained_body")
+    expected_body_gate = {
+        "per_capture_board_constrained_body": "board_constrained_body",
+        "per_capture_table_constrained_body": "table_constrained_body",
+    }.get(record["socket_pose_source"])
     raw_mesh = (Path(shared_root).expanduser().resolve() / "object_processing" /
                 mode.socket_object / "raw_mesh" / f"{mode.socket_object}.obj")
     if not raw_mesh.is_file():
@@ -364,11 +384,11 @@ def _verify_saved_socket_refinements(
         if camera_id in cameras:
             raise ValueError("saved socket observation repeats a camera")
         cameras.add(camera_id)
-        if expected_board_body:
+        if expected_body_gate is not None:
             if (observation.get("pose_world") is None) != (
                     observation.get("pose_robot") is None):
                 raise ValueError("saved per-view socket pose is incomplete")
-        if not expected_board_body or observation.get("pose_world") is not None:
+        if expected_body_gate is None or observation.get("pose_world") is not None:
             raw_world = validate_se3(observation.get("pose_world"),
                                      name="saved per-view socket pose")
             raw_robot = validate_se3(observation.get("pose_robot"),
@@ -393,9 +413,9 @@ def _verify_saved_socket_refinements(
         request_id = row.get("request_id")
         selection = row.get("stock_selection")
         gate = row.get("refinement_gate", "all_view_iou")
-        board_body = gate == "board_constrained_body"
+        body_fit = gate in ("board_constrained_body", "table_constrained_body")
         if (not isinstance(capture_id, str) or capture_id in seen_captures or
-                board_body != expected_board_body or
+                (gate if body_fit else None) != expected_body_gate or
                 cameras is None or not isinstance(accepted, list) or
                 not all(isinstance(camera, str) for camera in accepted) or
                 len(accepted) != len(cameras) or set(accepted) != cameras or
@@ -405,14 +425,14 @@ def _verify_saved_socket_refinements(
                 row.get("raw_mesh_sha256") != raw_mesh_hash or
                 not isinstance(selection, dict) or
                 selection.get("selection_mode") != (
-                    "board_constrained_body" if board_body else "iou") or
+                    gate if body_fit else "iou") or
                 selection.get("best_serial") != selected or
                 selection.get("n_candidates") != len(cameras) or
                 selection.get("n_masks") != len(cameras) or
                 selection.get("sil_reject") or
-                bool(selection.get("sil_skipped")) != board_body or
+                bool(selection.get("sil_skipped")) != body_fit or
                 type(selection.get("silhouette_iterations")) is not int or
-                (selection["silhouette_iterations"] != 0 if board_body else
+                (selection["silhouette_iterations"] != 0 if body_fit else
                  selection["silhouette_iterations"] <= 0)):
             raise ValueError("saved socket refinement source binding is invalid")
         try:
@@ -420,12 +440,13 @@ def _verify_saved_socket_refinements(
             scores = [float(per_view[camera]) for camera in cameras]
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("saved socket refinement quality is invalid") from exc
-        perception_mode = ("board_constrained_body" if board_body else
+        perception_mode = (gate if body_fit else
                            _stock_socket_perception_mode(selection))
         if (not 0 <= threshold <= 1 or
                 (threshold == 0 and perception_mode == "iou") or
                 gate not in ("all_view_iou", "stock_silhouette",
-                             "stock_ignore_sil_loss", "board_constrained_body") or
+                             "stock_ignore_sil_loss", "board_constrained_body",
+                             "table_constrained_body") or
                 (gate == "stock_silhouette" and perception_mode != "iou") or
                 (gate == "stock_ignore_sil_loss" and
                  perception_mode != "ignore_sil_loss") or
@@ -434,17 +455,19 @@ def _verify_saved_socket_refinements(
                 (gate == "all_view_iou" and
                  any(score < threshold for score in scores))):
             raise ValueError("saved socket refinement quality gate failed")
-        if board_body:
+        if body_fit:
             if mode.family != "cylinder":
-                raise ValueError("board body fit is only for a cylinder socket")
+                raise ValueError("support body fit is only for a cylinder socket")
             _check_body_fit_scores(per_view, selection, threshold)
         seen_captures.add(capture_id)
         seen_requests.add(request_id)
         refined_pose = validate_se3(
             robot_from_world @ validate_se3(row.get("pose_world")),
             name="saved refined robot socket")
-        if board_body:
+        if gate == "board_constrained_body":
             _check_board_supported_socket(refined_pose, record["board"])
+        elif gate == "table_constrained_body":
+            _check_table_supported_socket(refined_pose, record["support_surface"])
         refined_robot.append(refined_pose)
     if seen_captures != set(raw_by_capture):
         raise ValueError("saved socket refinements do not cover all captures")
@@ -491,6 +514,8 @@ def calibrate_session(
     measured_board: dict | None = None,
     scene_mode: str = "charuco_board",
     table_surface_z_m: float | None = None,
+    table_surface_point_robot_m: np.ndarray | None = None,
+    table_surface_normal_robot: np.ndarray | None = None,
 ) -> SessionCalibration:
     """Build one frozen calibration from supplied, already-captured evidence.
 
@@ -566,6 +591,7 @@ def calibrate_session(
 
     refined_by_capture: dict[str, SocketCaptureRefinement] = {}
     body_fit_count = 0
+    body_fit_gates: set[str] = set()
     if socket_capture_refinements is not None:
         if (not isinstance(socket_capture_refinements, Sequence) or
                 len(socket_capture_refinements) != len(groups)):
@@ -582,15 +608,17 @@ def calibrate_session(
                     set(refinement.per_view_iou) != cameras):
                 raise ValueError("socket refinement cameras differ from admitted views")
             threshold = float(refinement.minimum_refined_iou)
-            board_body = refinement.refinement_gate == "board_constrained_body"
+            body_fit = refinement.refinement_gate in (
+                "board_constrained_body", "table_constrained_body")
             perception_mode = (
-                "board_constrained_body" if board_body else
+                refinement.refinement_gate if body_fit else
                 _stock_socket_perception_mode(refinement.stock_selection))
             if (not math.isfinite(threshold) or not 0 <= threshold <= 1 or
                     (threshold == 0 and perception_mode == "iou") or
                     refinement.refinement_gate not in
                     ("all_view_iou", "stock_silhouette",
-                     "stock_ignore_sil_loss", "board_constrained_body") or
+                     "stock_ignore_sil_loss", "board_constrained_body",
+                     "table_constrained_body") or
                     any(not math.isfinite(float(score)) or
                             not 0 <= float(score) <= 1 or
                             (refinement.refinement_gate == "all_view_iou" and
@@ -604,15 +632,15 @@ def calibrate_session(
                 raise ValueError("socket refinement lacks source binding")
             selection = refinement.stock_selection
             if (not isinstance(selection, dict) or
-                    selection.get("selection_mode") != (
-                        "board_constrained_body" if board_body else "iou") or
+                selection.get("selection_mode") != (
+                        refinement.refinement_gate if body_fit else "iou") or
                     selection.get("best_serial") != refinement.selected_camera_id or
                     selection.get("n_candidates") != len(cameras) or
                     selection.get("n_masks") != len(cameras) or
                     selection.get("sil_reject") or
-                    bool(selection.get("sil_skipped")) != board_body or
+                    bool(selection.get("sil_skipped")) != body_fit or
                     type(selection.get("silhouette_iterations")) is not int or
-                    (selection["silhouette_iterations"] != 0 if board_body else
+                    (selection["silhouette_iterations"] != 0 if body_fit else
                      selection["silhouette_iterations"] <= 0)):
                 raise ValueError("socket refinement lacks passing stock selection")
             if (refinement.refinement_gate == "stock_silhouette" and
@@ -620,20 +648,24 @@ def calibrate_session(
                     refinement.refinement_gate == "stock_ignore_sil_loss" and
                     perception_mode != "ignore_sil_loss"):
                 raise ValueError("socket refinement gate differs from stock mode")
-            if board_body:
+            if body_fit:
                 if mode.family != "cylinder":
-                    raise ValueError("board body fit is only for a cylinder socket")
+                    raise ValueError("support body fit is only for a cylinder socket")
                 _check_body_fit_scores(refinement.per_view_iou, selection, threshold)
+                body_fit_gates.add(refinement.refinement_gate)
             validate_se3(refinement.pose_world, name="refined socket pose_world")
             refined_by_capture[refinement.capture_id] = refinement
         request_ids = [row.request_id for row in refined_by_capture.values()]
         if len(request_ids) != len(set(request_ids)):
             raise ValueError("socket refinement request IDs must be unique")
         body_fit_count = sum(
-            row.refinement_gate == "board_constrained_body"
+            row.refinement_gate in (
+                "board_constrained_body", "table_constrained_body")
             for row in refined_by_capture.values())
         if body_fit_count not in (0, len(refined_by_capture)):
             raise ValueError("socket captures use different localization methods")
+        if len(body_fit_gates) > 1:
+            raise ValueError("socket captures use different support surfaces")
     if not body_fit_count and any(
             observation.pose_world is None for observations in groups.values()
             for observation in observations):
@@ -690,10 +722,23 @@ def calibrate_session(
     if scene_mode == "board_free":
         if (type(table_surface_z_m) not in (int, float) or
                 not math.isfinite(table_surface_z_m) or measured_board is not None or
-                board_timestamp_source != "not_applicable" or body_fit_count):
+                board_timestamp_source != "not_applicable" or
+                "board_constrained_body" in body_fit_gates):
             raise ValueError("board-free scene needs a configured table surface")
+        point = np.asarray(
+            ([0.0, 0.0, float(table_surface_z_m)]
+             if table_surface_point_robot_m is None else
+             table_surface_point_robot_m), dtype=float)
+        normal = np.asarray(
+            ([0.0, 0.0, 1.0]
+             if table_surface_normal_robot is None else
+             table_surface_normal_robot), dtype=float)
+        from .table_surface import support_frame_from_plane
+        support_frame = support_frame_from_plane(point, normal)
         board = {"source": "configured_table_surface",
-                 "table_surface_z_m": float(table_surface_z_m)}
+                 "table_surface_z_m": float(table_surface_z_m),
+                 "plane_point_robot_m": support_frame[:3, 3].tolist(),
+                 "normal_robot": support_frame[:3, 2].tolist()}
     elif measured_board is None:
         from .board_view_selection import measure_tabletop_with_view_selection
         board = measure_tabletop_with_view_selection(
@@ -709,6 +754,9 @@ def calibrate_session(
         if refinement.refinement_gate == "board_constrained_body":
             pose_robot = world_to_robot @ validate_se3(refinement.pose_world)
             _check_board_supported_socket(pose_robot, board)
+        elif refinement.refinement_gate == "table_constrained_body":
+            pose_robot = world_to_robot @ validate_se3(refinement.pose_world)
+            _check_table_supported_socket(pose_robot, board)
     measured_base_scene = copy.deepcopy(base_scene)
     measured_base_scene.setdefault("cuboid", {})["table"] = table_cuboid(board)
     observations_robot: list[np.ndarray] = []
@@ -766,7 +814,10 @@ def calibrate_session(
     if not refined_by_capture:
         pose_source = "per_view_foundpose_legacy"
     elif body_fit_count:
-        pose_source = "per_capture_board_constrained_body"
+        pose_source = (
+            "per_capture_table_constrained_body"
+            if body_fit_gates == {"table_constrained_body"} else
+            "per_capture_board_constrained_body")
     else:
         pose_source = "per_capture_stock_multiview_refinement"
     record = {

@@ -35,7 +35,7 @@ from precision_insertion.session_launch import (
 )
 from precision_insertion.silhouette_compat import prepare_precision_silhouette
 from precision_insertion.stage_policy import load_zerodex_stage_policy
-from precision_insertion.table_surface import load_table_surface_z
+from precision_insertion.table_surface import load_table_surface
 from precision_insertion.timing_profile import profile_run, timed
 from precision_insertion.world import build_trial_scene_from_session
 from robot_pc_stages import _key_capture, _tabletop_pose_error_deg
@@ -82,14 +82,24 @@ def run_camera_only(
             launch_record["scene_mode"] = scene_mode
         if scene_mode == "board_free":
             table_z = os.environ.get("PRECISION_TABLE_SURFACE_Z_M")
+            table_config = os.environ.get("PRECISION_TABLE_PLANE_CONFIG")
             if table_z is None:
-                table_config = os.environ.get("PRECISION_TABLE_PLANE_CONFIG")
                 if not table_config:
                     table_config = str(Path(launch_config).resolve().parent /
                                        "table_plane.json")
-                table_z = load_table_surface_z(table_config)
+                surface = load_table_surface(table_config)
+                table_z = surface["table_surface_z_m"]
+            else:
+                surface = (load_table_surface(table_config) if table_config else {
+                    "plane_point_robot_m": np.array([0.0, 0.0, float(table_z)]),
+                    "normal_robot": np.array([0.0, 0.0, 1.0]),
+                })
             launch_record["table_surface_z_m"] = float(table_z)
-            launch_record["socket_perception_mode"] = "ignore_sil_loss"
+            launch_record["table_surface_point_robot_m"] = np.asarray(
+                surface["plane_point_robot_m"], dtype=float).tolist()
+            launch_record["table_surface_normal_robot"] = np.asarray(
+                surface["normal_robot"], dtype=float).tolist()
+            launch_record["socket_perception_mode"] = "table_constrained_body"
             for key in ("board_id", "minimum_board_corners",
                         "board_capture_phase", "board_fit_camera_ids"):
                 launch_record.pop(key, None)

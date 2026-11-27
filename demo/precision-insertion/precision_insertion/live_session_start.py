@@ -31,6 +31,7 @@ from .socket_refinement import refine_socket_capture
 from .session_bootstrap import (
     bootstrap_session, write_session_bootstrap_artifacts,
 )
+from .table_surface import support_frame_from_plane
 from .timing_profile import timed
 
 
@@ -68,6 +69,8 @@ def start_precision_session(
     fixture_contract_validated: bool = False,
     scene_mode: str = "charuco_board",
     table_surface_z_m: float | None = None,
+    table_surface_point_robot_m: np.ndarray | None = None,
+    table_surface_normal_robot: np.ndarray | None = None,
 ) -> StartedPrecisionSession:
     """Acquire and freeze one session, without touching Franka/Inspire.
 
@@ -110,11 +113,14 @@ def start_precision_session(
         raise ValueError(
             "socket IoU limit must be positive when the IoU gate is active")
     if socket_perception_mode not in ("iou", "ignore_sil_loss",
-                                      "board_constrained_body"):
+                                      "board_constrained_body",
+                                      "table_constrained_body"):
         raise ValueError("unknown socket perception mode")
-    if socket_perception_mode == "board_constrained_body" and mode.family != "cylinder":
+    body_constrained = socket_perception_mode in (
+        "board_constrained_body", "table_constrained_body")
+    if body_constrained and mode.family != "cylinder":
         raise ValueError(
-            "board-constrained body fit is only for the fixed cylinder socket")
+            "support-constrained body fit is only for the fixed cylinder socket")
     view_limits.validate()
     if (not isinstance(calibrated_camera_ids, set) or
             len(calibrated_camera_ids) < view_limits.minimum_accepted_views or
@@ -131,7 +137,17 @@ def start_precision_session(
     if board_free and (type(table_surface_z_m) not in (int, float) or
                        not math.isfinite(table_surface_z_m) or
                        socket_perception_mode == "board_constrained_body"):
-        raise ValueError("board-free scene needs a table height and FoundPose")
+        raise ValueError("board-free scene needs a table plane")
+    if (board_free and socket_perception_mode == "table_constrained_body" and
+            (table_surface_point_robot_m is None or
+             table_surface_normal_robot is None)):
+        raise ValueError("table-constrained socket fit needs the measured table plane")
+    if not board_free and socket_perception_mode == "table_constrained_body":
+        raise ValueError("ChArUco scene cannot use a board-free table fit")
+    support_pose_robot = (
+        support_frame_from_plane(
+            table_surface_point_robot_m, table_surface_normal_robot)
+        if board_free and table_surface_point_robot_m is not None else None)
     if not board_free and board_id not in ("9", "11"):
         raise ValueError("session board_id must be 9 or 11")
     if not board_free and (type(minimum_board_corners) is not int or
@@ -162,7 +178,7 @@ def start_precision_session(
     socket_collision = paths.socket_collision_mesh
     required = [("v8 socket mesh", socket_mesh),
                 ("exact socket collision mesh", socket_collision)]
-    if socket_perception_mode != "board_constrained_body":
+    if not body_constrained:
         required.append(("socket FoundPose representation",
                          paths.foundpose_repre(mode.socket_object)))
     for name, path in required:
@@ -201,10 +217,10 @@ def start_precision_session(
         if (board_capture_phase == "empty_before_socket" and
                 not _confirmed_socket_placement(confirm_socket_placement)):
             raise RuntimeError("operator did not confirm socket placement")
-    with timed(("socket.mask_init" if socket_perception_mode ==
-                "board_constrained_body" else "socket.model_init"),
+    with timed(("socket.mask_init" if body_constrained else
+                "socket.model_init"),
                phase="socket"):
-        if socket_perception_mode != "board_constrained_body":
+        if not body_constrained:
             prepare_precision_silhouette(
                 init_orchestrator=init_orchestrator,
                 object_name=mode.socket_object, raw_mesh=socket_mesh)
@@ -213,8 +229,7 @@ def start_precision_session(
             assets_root=str(paths.foundpose_assets_root(mode.socket_object)),
             intrinsics_full=intrinsics_full, extrinsics_full=extrinsics_full,
             image_hw=image_hw, mode="live", load_silhouette=False,
-            **({"mask_only": True} if socket_perception_mode ==
-               "board_constrained_body" else {}))
+            **({"mask_only": True} if body_constrained else {}))
     captures = []
     for index in range(socket_capture_count):
         with timed("socket.capture", phase="socket", kind="camera",
@@ -228,7 +243,7 @@ def start_precision_session(
                 acquisition_metadata_for_request=acquisition_metadata_for_request,
                 timeout_s=float(socket_timeout_s),
                 image_write_timeout_s=float(image_write_timeout_s),
-                mask_only=socket_perception_mode == "board_constrained_body",
+                mask_only=body_constrained,
                 request_id_factory=next_request_id))
     with timed("socket.bootstrap_refinement", phase="socket"):
         bootstrap = bootstrap_session(
@@ -251,6 +266,8 @@ def start_precision_session(
             board_capture_phase=board_capture_phase,
             measured_board=measured_board,
             scene_mode=scene_mode, table_surface_z_m=table_surface_z_m,
+            table_surface_point_robot_m=table_surface_point_robot_m,
+            table_surface_normal_robot=table_surface_normal_robot,
             socket_perception_mode=socket_perception_mode,
             max_socket_translation_mm=float(max_socket_translation_mm),
             max_socket_angle_deg=float(max_socket_angle_deg),
@@ -262,6 +279,7 @@ def start_precision_session(
                 perception_mode=socket_perception_mode,
                 board_pose_robot=(np.asarray(measured_board["T_robot_board"])
                                   if measured_board else None),
+                support_pose_robot=support_pose_robot,
                 c2r=c2r))
     with timed("socket.evidence_write", phase="socket", kind="io"):
         saved = write_session_bootstrap_artifacts(bootstrap, output)

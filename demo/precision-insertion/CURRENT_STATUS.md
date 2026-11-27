@@ -16,7 +16,7 @@ audit.
 | --- | --- |
 | Independent runner | `run_zerodex_capture4.sh` and `run_live.py` run the demo-local state machine. Stock `run_auto.py`, `run_pipeline.py` and `scene_cfg.py` are not entry points. |
 | ZeroDex machine binding | `zerodex_capture4.env.sh` owns capture4 serials/host, local cache paths, NAS namespace and the straight-mount FR3 profile. `zerodex_franka_integration.py` changes routing only inside the process. |
-| Board-free perception | The default launcher records `scene_mode=board_free`, uses the commissioned robot/camera extrinsics and measured table plane, and removes board-ID/corner fields from the effective launch. Socket and key prompts do not require an object to be “on a board,” and both upright and side-down cylindrical-key conditioning use the same measured support plane. |
+| Board-free perception | The default launcher records `scene_mode=board_free`, uses the commissioned robot/camera extrinsics and measured table plane, and removes board-ID/corner fields from the effective launch. The fixed cylindrical socket is localized directly from its four SAM masks, known CAD body and saved support plane (`table_constrained_body`); socket FoundPose is not run or required. Key pose remains the same-session SAM3+FoundPose input to MV-GoTrack. Socket and key prompts do not require an object to be “on a board,” and both upright and side-down cylindrical-key conditioning use the same measured support plane. |
 | End-effector modes | ZeroDex defaults to `franka_gripper`; `PRECISION_END_EFFECTOR=inspire` preserves the original Inspire/BODex route. Each mode has an independent URDF, joint width and candidate namespace. Gripper startup does not import Inspire Modbus. The Franka executor, ParaDex client and selected daemon share the metric-width `open_gripper`/`grasp`/feedback protocol. |
 | Tabletop grasp coverage | The gripper catalogue contains one deterministic analytic cylindrical grasp for each supported tabletop class (`end_down`/`000` and `side_down`/`001`). Both retain the same endpoint collision contract; Inspire keeps its screened BODex catalogue. The FR3/gripper planner uses cuRobo's stock Franka palm/finger collision-sphere profile rather than the former two-sphere palm approximation. |
 | Four-camera evidence | Every checkpoint captures all four commissioned cameras. Socket-pose inliers and measured residuals may select a smaller inference subset; camera evidence is not discarded or permanently blacklisted. |
@@ -66,6 +66,17 @@ audit.
 - A read-only 2026-11-26 capture4 probe reported all isolated ports ready:
   `5009, 5480, 5481, 5482, 6894, 15006, 15007, 16893`. The four configured
   serials remain `26053248, 25322639, 25305462, 25322642`.
+- A fresh, robot-free four-camera run on 2026-11-27 exercised the default
+  board-free socket path with the lit physical 5 mm-gap fixture. All four SAM
+  masks contributed to the support-plane/CAD fit. The frozen socket origin was
+  `[0.559026, 0.105217, 0.063251] m` in the robot frame, its local +Z axis was
+  `[-0.011407, -0.001576, 0.999934]`, and the mean whole-body mask IoU was
+  `0.9273` (per-view `0.9437, 0.9146, 0.9391, 0.8966`). The saved source is
+  `per_capture_table_constrained_body`; the session reload check passed. The
+  key was already present during this one-off diagnostic, so it validates the
+  estimator and runtime binding rather than the production key-absent socket
+  capture procedure. No robot command was issued and IoU remains a diagnostic,
+  not a newly added veto.
 - A later read-only capture4 check enumerated those same four cameras and
   reported `stream_pid=null`, `tracker_pid=null`. This is the expected idle
   state before a same-session accepted key pose initializes tracking; the

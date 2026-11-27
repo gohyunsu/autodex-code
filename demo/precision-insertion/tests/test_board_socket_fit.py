@@ -13,7 +13,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from precision_insertion.calibration import SocketObservation  # noqa: E402
-from precision_insertion.board_socket_fit import fit_board_socket_body  # noqa: E402
+from precision_insertion.board_socket_fit import (  # noqa: E402
+    fit_board_socket_body, fit_support_surface_socket_body,
+)
+from precision_insertion.table_surface import support_frame_from_plane  # noqa: E402
 from precision_insertion.perception_evidence import SocketCaptureEvidence  # noqa: E402
 from precision_insertion.session_bootstrap import SocketCaptureInput  # noqa: E402
 from precision_insertion.socket_refinement import refine_socket_capture  # noqa: E402
@@ -36,6 +39,19 @@ def _disk_mask(E: np.ndarray, K: np.ndarray, radius: float,
     points = np.array([[radius * np.cos(a), radius * np.sin(a), z, 1.0]
                        for z in (bottom, top) for a in angle])
     xyz = (E @ points.T)[:3].T
+    pixel = (K @ xyz.T).T
+    pixel = np.rint(pixel[:, :2] / pixel[:, 2, None]).astype(np.int32)
+    mask = np.zeros((600, 800), dtype=np.uint8)
+    cv2.fillConvexPoly(mask, cv2.convexHull(pixel), 1)
+    return mask.astype(bool)
+
+
+def _disk_mask_pose(E: np.ndarray, K: np.ndarray, radius: float,
+                    bottom: float, top: float, pose: np.ndarray) -> np.ndarray:
+    angle = np.linspace(0, 2 * np.pi, 72, endpoint=False)
+    points = np.array([[radius * np.cos(a), radius * np.sin(a), z, 1.0]
+                       for z in (bottom, top) for a in angle])
+    xyz = (E @ pose @ points.T)[:3].T
     pixel = (K @ xyz.T).T
     pixel = np.rint(pixel[:, :2] / pixel[:, 2, None]).astype(np.int32)
     mask = np.zeros((600, 800), dtype=np.uint8)
@@ -188,3 +204,30 @@ def test_board_socket_fit_rejects_noncanonical_intrinsics(tmp_path):
             c2r=np.eye(4),
             board_pose_robot=np.diag([1.0, -1.0, -1.0, 1.0]),
             raw_mesh=mesh)
+
+
+def test_table_socket_fit_uses_measured_plane_normal(tmp_path):
+    mesh = tmp_path / "socket.obj"
+    mesh.write_text("\n".join(
+        f"v {r * np.cos(a)} {r * np.sin(a)} {z}"
+        for r, z in ((.06, 0), (.06, .005), (.04, .005), (.04, .055))
+        for a in np.linspace(0, 2 * np.pi, 36, endpoint=False)) + "\n")
+    K = np.array([[850, 0, 400], [0, 850, 300], [0, 0, 1.0]])
+    cameras = {
+        "left": _camera(np.array([.24, -.28, .42])),
+        "right": _camera(np.array([-.30, -.20, .40])),
+        "rear": _camera(np.array([.27, .30, .44])),
+    }
+    support = support_frame_from_plane(
+        [0.015, -0.02, 0.01], [-0.02, 0.01, 0.999])
+    masks = {name: _disk_mask_pose(E, K, .04, .005, .055, support)
+             for name, E in cameras.items()}
+    pose, diagnostic = fit_support_surface_socket_body(
+        masks=masks, intrinsics_undist={name: K for name in cameras},
+        extrinsics_camera_world=cameras, c2r=np.eye(4),
+        support_pose_robot=support, raw_mesh=mesh,
+        support_source="test_table_plane")
+    assert pose[:3, 3] == pytest.approx(support[:3, 3], abs=.002)
+    assert pose[:3, 2] == pytest.approx(support[:3, 2], abs=1e-6)
+    assert diagnostic["support_source"] == "test_table_plane"
+    assert diagnostic["mean_body_iou"] > .9
