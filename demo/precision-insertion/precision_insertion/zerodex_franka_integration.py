@@ -29,6 +29,14 @@ ZERODEX_FR3_FCI_IP = os.environ.get(
 LOCAL_DAEMON_HOST = os.environ.get(
     "PRECISION_ZERODEX_DAEMON_HOST", "127.0.0.1")
 _CLEAR_VIEW_SCHEMA = "precision_insertion_zerodex_clear_view_v1"
+# A saved post-squeeze replay showed that the stock 0.04-rad endpoint
+# tolerance could leave the ZeroDex arm about 0.019 rad (L2) from the planned
+# grasp endpoint.  At that measured pose, the gripper collision model touched
+# the table; the same pose was collision-free until the residual fell below
+# roughly 0.0038 rad.  Keep following the already-streamed trajectory until a
+# 0.002-rad L2 residual is reached.  This is process-local to ZeroDex and does
+# not add a new acceptance gate or switch to the daemon's blocking move mode.
+ZERODEX_STREAM_ENDPOINT_TOLERANCE_RAD = 0.002
 
 
 def _quiet_curobo_world_mesh_debug(world_mesh=None) -> Callable[[], None]:
@@ -166,6 +174,7 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
     if executor is not None:
         executor.streaming_clear_view_home = True
         executor.clear_view_stream_speed = 0.2
+        executor.follow_tol = ZERODEX_STREAM_ENDPOINT_TOLERANCE_RAD
 
     def close() -> None:
         try:

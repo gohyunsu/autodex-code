@@ -75,3 +75,24 @@ The D∞ tests cover both v8 tabletop stems, several axial yaws and both end
 frames; they check that the transformed physical center and candidate axis
 are unchanged. The complete demo suite is run with this checkout on
 `PYTHONPATH` so subprocess CLI tests import the same AutoDex package.
+
+## 2026-11-27 ZeroDex streamed endpoint convergence
+
+The first physical Robotiq rerun reached the planned squeeze and reported a
+real grasp, but its measured-state lift replan stopped at
+`jacobian_start_robot_collision`. Robot-command-free replay with
+`diagnose_saved_lift.py` isolated that collision to the table: removing the
+socket did not change the result, removing the table passed, and substituting
+the planned arm state while retaining the measured jaw passed. The arm was
+about 0.019 rad L2 from the planned squeeze endpoint even though the stock
+0.04-rad follower tolerance considered it complete.
+
+Interpolating between the planned and measured arm states placed the
+collision boundary near a 0.0038-rad endpoint residual. The ZeroDex factory
+therefore sets its process-local streamed follower tolerance to 0.002 rad.
+The follower keeps sending the final reference with zero feed-forward until
+that residual is reached. It does not use the daemon's blocking landing
+motion, add a new grasp/insertion acceptance gate, or change the AutoDex and
+Inspire defaults. The physical rerun with this tighter endpoint convergence
+is still required before claiming that the measured lift is resolved on the
+robot.
