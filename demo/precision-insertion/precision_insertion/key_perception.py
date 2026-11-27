@@ -11,10 +11,11 @@ or robot motion.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 
 import cv2
@@ -38,6 +39,28 @@ from .socket_exclusion import (
 )
 from .symmetry import load_axial_symmetry
 from .table_surface import session_support_plane_robot
+
+
+def _effective_key_view_limits(limits: SocketViewLimits) -> SocketViewLimits:
+    """Apply the key-only view-count override without weakening socket setup.
+
+    One calibrated RGB-D FoundPose observation is a complete SE(3) estimate.
+    The tabletop/support-plane and cylinder-symmetry stages still constrain and
+    refine that estimate.  Keeping this override key-local avoids changing the
+    separately commissioned multi-view socket calibration contract.
+    """
+    raw = os.environ.get("PRECISION_KEY_MINIMUM_ACCEPTED_VIEWS", "").strip()
+    if not raw:
+        return limits
+    try:
+        minimum = int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            "PRECISION_KEY_MINIMUM_ACCEPTED_VIEWS must be an integer") from exc
+    if minimum < 1:
+        raise ValueError(
+            "PRECISION_KEY_MINIMUM_ACCEPTED_VIEWS must be at least one")
+    return replace(limits, minimum_accepted_views=minimum)
 
 
 @dataclass(frozen=True)
@@ -311,6 +334,7 @@ def _admit_key_capture_common(
     if (capture.frame_timestamps_s !=
             {serial: row["timestamp_s"] for serial, row in verified.items()}):
         raise ValueError("key frame times differ from bound images")
+    view_limits = _effective_key_view_limits(view_limits)
     view_limits.validate()
     if exceeds_static_capture_skew_limit(
             verified, view_limits.maximum_capture_skew_s):

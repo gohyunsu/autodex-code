@@ -34,6 +34,11 @@ done
 unset precision_path_var
 export PRECISION_GAP_MM=${PRECISION_GAP_MM:-5}
 export PRECISION_SCENE_MODE=${PRECISION_SCENE_MODE:-board_free}
+# A single calibrated RGB-D FoundPose view already yields a full key pose.
+# Far capture4 views may not resolve the small key, so do not make their SAM
+# masks a prerequisite for pickup. Socket calibration retains its launch-file
+# multi-view requirement; this override is consumed only by key perception.
+export PRECISION_KEY_MINIMUM_ACCEPTED_VIEWS=${PRECISION_KEY_MINIMUM_ACCEPTED_VIEWS:-1}
 export PRECISION_TABLE_PLANE_CONFIG=${PRECISION_TABLE_PLANE_CONFIG:-$PRECISION_LOCAL_PROJECT_ROOT/calibration/table_plane/current/table_plane.json}
 export PRECISION_XY_ESTIMATOR=${PRECISION_XY_ESTIMATOR:-sam_half_ellipse}
 export PRECISION_PRELOAD_VLM=${PRECISION_PRELOAD_VLM:-1}

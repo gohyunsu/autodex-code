@@ -34,7 +34,7 @@ class SocketViewLimits:
         if (self.minimum_mask_pixels < 1 or
                 self.minimum_foundpose_inliers < 1 or
                 self.minimum_border_clearance_px < 0 or
-                self.minimum_accepted_views < 2 or
+                self.minimum_accepted_views < 1 or
                 not math.isfinite(self.minimum_foundpose_quality) or
                 self.minimum_foundpose_quality <= 0 or
                 not math.isfinite(self.maximum_capture_skew_s) or
