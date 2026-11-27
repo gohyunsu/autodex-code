@@ -6,9 +6,10 @@ timing contracts remain in [`OPERATIONS.md`](OPERATIONS.md),
 [`ACTION_LOOP.md`](ACTION_LOOP.md) and [`TIMING_PROFILE.md`](TIMING_PROFILE.md).
 Historical dated reports are evidence, not current run instructions.
 
-Last audited: **2026-11-27** on kds-Z790. The read-only capture4 service and
-distributed-Qwen probes passed; no robot command was issued during this
-audit.
+Last audited: **2026-11-27** on kds-Z790. The current live branch is
+`feat/zerodex-precision-insertion-robotiq` at commit `62ef455`. Capture4
+perception services and the Robotiq state service were reached read-only; no
+robot motion was issued during this audit.
 
 ## Implemented
 
@@ -17,8 +18,8 @@ audit.
 | Independent runner | `run_zerodex_capture4.sh` and `run_live.py` run the demo-local state machine. Stock `run_auto.py`, `run_pipeline.py` and `scene_cfg.py` are not entry points. |
 | ZeroDex machine binding | `zerodex_capture4.env.sh` owns capture4 serials/host, local cache paths, NAS namespace and the straight-mount FR3 profile. `zerodex_franka_integration.py` changes routing only inside the process. |
 | Board-free perception | The default launcher records `scene_mode=board_free`, uses the commissioned robot/camera extrinsics and measured table plane, and removes board-ID/corner fields from the effective launch. The fixed cylindrical socket is localized directly from its four SAM masks, known CAD body and saved support plane (`table_constrained_body`); socket FoundPose is not run or required. Key pose remains the same-session SAM3+FoundPose input to MV-GoTrack. Socket and key prompts do not require an object to be “on a board,” and both upright and side-down cylindrical-key conditioning use the same measured support plane. |
-| End-effector modes | ZeroDex defaults to `franka_gripper`; `PRECISION_END_EFFECTOR=inspire` preserves the original Inspire/BODex route. Each mode has an independent URDF, joint width and candidate namespace. Gripper startup does not import Inspire Modbus. The Franka executor, ParaDex client and selected daemon share the metric-width `open_gripper`/`grasp`/feedback protocol. |
-| Tabletop grasp coverage | The gripper catalogue contains eight symmetry-equivalent radial approaches for the upright/end-down class (`000`) and two top-down wrist flips for the side-down class (`001`). The measured 6D key pose and frozen session support normal reconstruct every grasp at runtime; the files remain stable candidate identifiers. All ten retain the same endpoint collision contract. Inspire keeps its independent screened BODex catalogue. The FR3/gripper planner uses cuRobo's stock Franka palm/finger collision-sphere profile rather than the former two-sphere palm approximation. |
+| End-effector modes | ZeroDex defaults to the commissioned `robotiq_2f85`. The arm remains on the local FR3 FCI daemon, while the physical Robotiq RS-485 adapter remains owned by capture4 and is commanded through its isolated ports 5565/5566. `franka_gripper` and `inspire` remain separate selectable modes; neither implementation was removed. Every mode has an independent URDF, joint convention and candidate namespace. |
+| Tabletop grasp coverage | The Robotiq catalogue contains eight symmetry-equivalent radial approaches for the upright/end-down class (`000`) and two top-down wrist flips for the side-down class (`001`). The measured 6D key pose and frozen support plane reconstruct every grasp at runtime; the files remain stable candidate identifiers. All ten passed the 20 mm endpoint catalogue screen. The cuRobo model uses the official 2F-85 meshes, mimic kinematics and CAD-derived collision spheres. Inspire keeps its independent screened BODex catalogue and the stock Franka Hand keeps its own analytic catalogue. |
 | Four-camera evidence | Every checkpoint captures all four commissioned cameras. Socket-pose inliers and measured residuals may select a smaller inference subset; camera evidence is not discarded or permanently blacklisted. |
 | Full action loop | The active profile supplies all ten stage handlers: key planning, pickup, lift, held relation, transfer/insertion, retry diagnosis, held return, transfer recovery, repose planning and repose execution. |
 | Same-trial correction | Pre-insertion capture, metric endpoint/partial-shape observation, bounded wrist correction, recapture and measured-motion feedback run before the first insertion stroke. The active profile permits a 10 mm per-update step and has no cumulative XY cap. |
@@ -33,15 +34,15 @@ audit.
 
 ## Verified evidence
 
-- The static ZeroDex preflight passes in both end-effector modes. The gripper
-  mode has 10/10 eligible deterministic candidates: eight radial approaches
+- The static ZeroDex preflight passes for the Robotiq, stock Franka Hand and
+  Inspire contracts. The Robotiq mode has 10/10 eligible deterministic candidates: eight radial approaches
   for upright/end-down and two wrist flips for side-down;
   Inspire retains 126 catalogued and 114 eligible candidates. Both report
   four configured cameras, board-free mode, no legacy runtime path and no NAS
   reference outside `/mnt/paradex2/hyunsu`.
 - The explicit
   `PRECISION_EXPERIMENT_PROFILE=mvgotrack_axis_alignment_capture4.env.sh`
-  preflight also passes with the default `franka_gripper` route. It resolves
+  preflight also passes with the default `robotiq_2f85` route. It resolves
   `xy_estimator=mvgotrack`, the capture4 endpoint at port 5591, the isolated
   remote manager/session paths and both tabletop grasp candidates. Selecting
   `PRECISION_END_EFFECTOR=inspire` remains an independent supported route; it
@@ -104,7 +105,7 @@ audit.
   unrelated calibration work in the development checkout as part of the
   precision runtime.
 - The current worktree passed the complete demo suite with
-  **1623 passed, 4 skipped**. This includes regression coverage for the ten
+  **1629 passed, 4 skipped**. This includes regression coverage for the ten
   deterministic gripper candidates and for retaining the measured board-free
   support-plane tilt in key conditioning, tabletop classification, grasp
   construction and failed-attempt restoration.
@@ -168,9 +169,9 @@ audit.
 
 | Item | Current evidence / next action |
 | --- | --- |
-| Current hardware execution | The RT kernel is active and `enp4s0` is up at `172.16.1.10/24`. On the latest read-only repeat, `172.16.1.11` resolved at ARP and answered ICMP in 0.192 ms, while local ports 5555/5556 were listening. The state-only subscriber nevertheless received no two advancing packets within two seconds, so an active daemon-to-FR3 state stream is not yet proven and no motion was issued. Restart or inspect the selected daemon before a physical run; use `franka_gripper` by default or explicitly select the preserved `inspire` mode. |
-| Local cuRobo GPU preflight | The first gripper preflight exposed and fixed both a stale `~/shared_data/AutoDex` planner-YAML fallback and the explicit-YAML 1,024-seed regression. With the restored FR3 32-seed profile and stock Franka gripper collision spheres, the real local-CUDA diagnostic passed `side_down` pickup, approach and held lift while the unrelated GPU process remained resident. It then reported `transfer_unreachable` for the hypothetical socket placement; no physical scene or robot command was involved. On 2026-11-27 `/dev/nvidia*`, `nvidia-smi`, and PyTorch CUDA were available again on the RTX 3090. |
-| Physical gripper/MV-GoTrack run | Code, assets, capture4 services and tracker deployment are present, but the new gripper pickup-to-insertion route and same-session tracker initialization have not been physically exercised. First run GPU cuRobo preflight, then initialize tracking from a fresh accepted key pose; do not substitute an arbitrary or stale tracker initializer. |
+| Current hardware execution | The RT kernel is active and `enp4s0` is configured for the FR3. A paired read-only sample combined the live FR3 7-axis state with the capture4 Robotiq position without fault. The local FCI daemon is not currently listening, so it must be restarted before motion. The physical Robotiq is not a Franka Hand; the daemon message that its built-in gripper is unavailable is expected. |
+| Local cuRobo GPU preflight | Planner construction succeeds with the new 8-DoF FR3+Robotiq model, official 2F-85 geometry and the restored FR3 32-seed profile. A fresh measured-scene pickup/transfer/insertion preflight still has to be run after the clean socket/key recapture; model construction alone is not a trajectory result. |
+| Physical Robotiq/MV-GoTrack run | Code, assets, 10 candidates, capture4 services and tracker deployment are present, but the new Robotiq pickup-to-insertion route and same-session tracker initialization have not yet been physically exercised. Capture the moved socket with the key absent, replace and measure the key, run GPU preflight, and initialize tracking only from that accepted pose. |
 | Reproduction bundle | The writable NAS manifest now archives merged AutoDex commit `299ddc3`, ParaDex `e2cd4fd`, and nvdiffrast `253ac4f`, and retains 6,861 declared asset files. `--refresh-code-only` no longer scans or mutates the established asset/rig inventories. Both NFS and SMB full-tree verification later entered remote-filesystem response waits while traversing the runtime view, so the post-refresh metadata/SHA256 audit remains to be repeated when NAS metadata service is responsive; the manifest and all three declared code archives are present from both mount views. |
 | VLM accuracy claim | Saved replay supports development, but class balance and independent held-out trials are insufficient for a general accuracy claim. Manual labels remain authoritative during data collection. |
 | Robust insertion claim | Two observed successes are not a controlled success-rate experiment. Repeat fixed-grasp/fixed-socket trials and report stage-wise confidence intervals before making this claim. |

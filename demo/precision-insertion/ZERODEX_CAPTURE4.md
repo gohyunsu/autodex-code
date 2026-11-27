@@ -1,6 +1,58 @@
 # ZeroDex capture4 profile (kds-Z790)
 
-## Current restart state (2026-11-02)
+## Current Robotiq runtime (2026-11-27)
+
+The commissioned ZeroDex end effector is a **Robotiq 2F-85**, not the stock
+Franka Hand. The current machine profile therefore defaults to
+`PRECISION_END_EFFECTOR=robotiq_2f85`. The local real-time FCI daemon owns only
+the FR3 arm; capture4 owns the Robotiq RS-485 adapter and exposes the isolated
+command/state service at ports 5565/5566. Consequently, the daemon message
+`Gripper not available` is expected and must not be interpreted as a missing
+Robotiq.
+
+The Robotiq mode has its own 8-DoF cuRobo/URDF contract (seven arm joints and
+one independent 2F-85 mimic joint), straight-adapter transform, CAD-derived
+collision spheres and candidate namespace. Its catalogue contains eight
+upright radial approaches and two lying top-down wrist flips; all ten retain
+the existing 20 mm insertion endpoint collision screen. The Inspire and stock
+Franka Hand modes remain available and use different assets and candidates.
+
+For a moved socket, acquire a clean socket-only session first. Do not move the
+socket after this capture:
+
+```bash
+cd /tmp/precision-integrate
+export PRECISION_EXPERIMENT_PROFILE=mvgotrack_axis_alignment_capture4.env.sh
+SOCKET_RUN="$HOME/precision_insertion_project/sessions/socket_$(date +%Y%m%d_%H%M%S)"
+bash demo/precision-insertion/run_zerodex_capture4.sh --camera-only \
+  --socket-only --output-dir "$SOCKET_RUN"
+```
+
+After the command finishes, put the key on the same table. Start the local FR3
+daemon in another terminal and leave it running:
+
+```bash
+cd /home/hyunsu/vive-teleop
+sudo bash ./scripts/run_franka_daemon.sh
+```
+
+Then plan from the new key pose without executing pickup:
+
+```bash
+cd /tmp/precision-integrate
+export PRECISION_EXPERIMENT_PROFILE=mvgotrack_axis_alignment_capture4.env.sh
+export PRECISION_REUSE_SESSION_EVIDENCE="$SOCKET_RUN/socket_evidence"
+export PRECISION_KEY_ALREADY_PLACED=1
+bash demo/precision-insertion/run_zerodex_capture4.sh --plan-only
+```
+
+If planning returns a complete pickup/lift/transfer/20 mm insertion path, run
+the same command with `--run`. The accepted same-session FoundPose pose starts
+MV-GoTrack before planning; tracker initialization overlaps cuRobo, remains
+continuous through pickup/lift/transfer, and is read again at the stopped
+pre-insertion hold for symmetry-reduced XY and optional axis correction.
+
+## Historical restart state (2026-11-02)
 
 The robot and Inspire hand are currently off. The newest saved 5 mm socket
 measurement used by the latest physical runs is
@@ -110,12 +162,16 @@ For the independent NAS project bundle and post-run recording upload, see
 
 ### End-effector modes
 
-The ZeroDex machine profile defaults to the stock Franka parallel gripper;
-this does **not** remove or replace the Inspire implementation.  The selected
+The ZeroDex machine profile defaults to the Robotiq 2F-85; this does **not**
+remove or replace the stock Franka Hand or Inspire implementation. The selected
 end effector is an explicit runtime contract:
 
 ```bash
-# ZeroDex default: 7 arm + 2 gripper joints, analytic cylinder grasps.
+# ZeroDex default: 7 arm + 1 Robotiq mimic joint, analytic cylinder grasps.
+PRECISION_END_EFFECTOR=robotiq_2f85 \
+  bash demo/precision-insertion/run_zerodex_capture4.sh --check
+
+# Preserved stock Franka Hand route: 7 arm + 2 finger joints.
 PRECISION_END_EFFECTOR=franka_gripper \
   bash demo/precision-insertion/run_zerodex_capture4.sh --check
 
@@ -126,11 +182,11 @@ PRECISION_END_EFFECTOR=inspire \
 
 Both modes use the same session, perception, lift, transfer, MV-GoTrack,
 pre-insertion correction, insertion, release and final-label state machine.
-They deliberately do not share grasp files or robot geometry.  The gripper
-mode selects `fr3_gripper`, the nine-DoF URDF, analytic standing/lying cylinder
-grasps and `AutoDex/candidates/franka_gripper`; the Inspire mode selects
-`fr3_inspire`, the thirteen-DoF URDF, the original BODex candidates and
-`AutoDex/candidates/inspire`.  Lift-image crops and reset/repose execution use
+They deliberately do not share grasp files or robot geometry. The default
+mode selects `fr3_robotiq_2f85`, the eight-DoF URDF, analytic standing/lying
+cylinder grasps and `AutoDex/candidates/robotiq_2f85`; the stock Hand mode
+selects `fr3_gripper`; the Inspire mode selects `fr3_inspire` and the original
+BODex candidates. Lift-image crops and reset/repose execution use
 the measured joint-vector width to keep their FK and opening commands in the
 same selected contract.  No conversion from an Inspire grasp to a gripper
 grasp (or the reverse) is attempted.

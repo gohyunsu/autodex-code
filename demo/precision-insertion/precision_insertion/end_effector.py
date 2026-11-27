@@ -1,8 +1,9 @@
 """End-effector contracts shared by precision-insertion runtime modules.
 
-The ZeroDex FR3 can be fitted with either the historical Inspire hand or the
-stock Franka parallel gripper.  Keep those assets and joint conventions
-separate: an Inspire BODex candidate is not a valid Franka-gripper candidate.
+The ZeroDex FR3 can be fitted with the commissioned Robotiq 2F-85, the
+historical Inspire hand, or the stock Franka parallel gripper. Keep those
+assets and joint conventions separate: candidates are never converted across
+end-effector contracts.
 """
 
 from __future__ import annotations
