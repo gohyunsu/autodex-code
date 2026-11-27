@@ -22,7 +22,10 @@ import numpy as np
 
 from autodex.utils.conversion import cart2se3
 from precision_insertion.assets import AssetPaths
-from precision_insertion.camera_stream import open_autodex_camera_stream
+from precision_insertion.camera_stream import (
+    attach_running_autodex_camera_stream,
+    open_autodex_camera_stream,
+)
 from precision_insertion.candidates import select_pose_candidates
 from precision_insertion.live_key_trial import _capture_admitted_key
 from precision_insertion.live_orchestration import load_reused_socket_session
@@ -145,10 +148,15 @@ def run_camera_only(
                         init_orchestrator=cameras.init_orchestrator,
                         object_name=launch.mode.key_object,
                         raw_mesh=paths.raw_mesh(launch.mode.key_object))
-            with open_autodex_camera_stream(
+            if os.environ.get("PRECISION_ATTACH_CAMERAS") == "1":
+                stream_context = attach_running_autodex_camera_stream(
+                    launch.pc_list, launch.capture_ips)
+            else:
+                stream_context = open_autodex_camera_stream(
                     launch.pc_list, capture_ips=launch.capture_ips,
                     name="precision_zerodex_camera_only",
-                    acquisition_mode=launch.camera_acquisition_mode):
+                    acquisition_mode=launch.camera_acquisition_mode)
+            with stream_context:
                 if saved_session is None:
                     with timed("startup.board_socket_session", phase="startup"):
                         started = cameras.start()

@@ -93,6 +93,7 @@ def test_camera_only_reuses_socket_key_and_catalog_without_robot(
                                             producer_manifest={},
                                             calibration=calibration)))
     monkeypatch.setattr(camera_only, "open_autodex_camera_stream", open_stream)
+    monkeypatch.delenv("PRECISION_ATTACH_CAMERAS", raising=False)
     monkeypatch.setattr(camera_only, "prepare_precision_silhouette",
                         lambda **_kwargs: events.append("prewarm"))
     monkeypatch.setattr(camera_only, "open_verified_session",
@@ -153,6 +154,83 @@ def test_camera_only_reuses_socket_key_and_catalog_without_robot(
     assert report["socket_evidence_reused"] is reuse
     assert report["robot_ready"] is False
     assert (tmp_path / "run" / "report.json").is_file()
+
+
+def test_camera_only_attaches_to_running_stream_without_taking_ownership(
+        tmp_path, monkeypatch):
+    events = []
+    mode = select_mode("cylinder", 20)
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    evidence = tmp_path / "saved"
+    launch = SimpleNamespace(
+        mode=mode, scene_mode="charuco_board",
+        socket_perception_mode="board_constrained_body",
+        pc_list=("capture4",), capture_ips=("192.0.2.1",),
+        shared_root=shared, capture_root=tmp_path / "capture",
+        camera_acquisition_mode="stream", camera_ids={"a"},
+        intrinsics_full={"a": {}}, extrinsics_full={"a": {}},
+        image_hw=(1536, 2048), view_limits=SimpleNamespace(),
+        upright_cylinder_only=False,
+    )
+    cameras = SimpleNamespace(
+        init_orchestrator=object(),
+        acquisition_metadata_for_request=lambda _id: {},
+    )
+
+    @contextmanager
+    def open_cameras(_launch, *, init_ports):
+        yield cameras
+
+    @contextmanager
+    def attach_stream(pcs, ips):
+        assert pcs == ("capture4",)
+        assert ips == ("192.0.2.1",)
+        events.append("attach")
+        yield {}
+        events.append("detach")
+
+    monkeypatch.setenv("PRECISION_ATTACH_CAMERAS", "1")
+    monkeypatch.setattr(camera_only, "load_session_launch", lambda *_a, **_k: launch)
+    monkeypatch.setattr(camera_only, "preflight_endpoint_catalog_file",
+                        lambda **_k: {"candidates": []})
+    monkeypatch.setattr(camera_only, "load_reused_socket_session",
+                        lambda **_k: SimpleNamespace(
+                            evidence_dir=evidence, producer_manifest={},
+                            calibration=SimpleNamespace()))
+    monkeypatch.setattr(camera_only, "open_session_cameras", open_cameras)
+    monkeypatch.setattr(camera_only, "attach_running_autodex_camera_stream",
+                        attach_stream)
+    monkeypatch.setattr(camera_only, "open_autodex_camera_stream",
+                        lambda *_a, **_k: pytest.fail(
+                            "attached mode must not take camera ownership"))
+    monkeypatch.setattr(camera_only, "prepare_precision_silhouette", lambda **_k: None)
+    monkeypatch.setattr(camera_only, "open_verified_session",
+                        lambda **_k: SimpleNamespace(runner=object()))
+    monkeypatch.setattr(camera_only, "_capture_admitted_key",
+                        lambda **_k: SimpleNamespace(
+                            pose_world=np.eye(4), request_id=42,
+                            selected_camera_id="a"))
+    monkeypatch.setattr(camera_only, "build_trial_scene_from_session",
+                        lambda **_k: {"mesh": {"target": {
+                            "pose": [0, 0, 0, 1, 0, 0, 0]}}})
+    monkeypatch.setattr(camera_only, "classify_key_tabletop_pose",
+                        lambda **_k: {"stem": "000"})
+    monkeypatch.setattr(camera_only, "select_pose_candidates",
+                        lambda *_a, **_k: {
+                            "status": "no_candidates", "candidates": []})
+    monkeypatch.setattr(camera_only, "_key_capture", lambda _p=None: {
+        "max_key_state_skew_s": 5., "capture_timeout_s": 120.,
+        "image_write_timeout_s": 90.})
+    monkeypatch.setattr(camera_only, "profile_run", lambda _p: nullcontext())
+    monkeypatch.setattr(camera_only, "timed", lambda *_a, **_k: nullcontext())
+
+    camera_only.run_camera_only(
+        launch_config=tmp_path / "launch.json",
+        endpoint_catalog=tmp_path / "catalog.json",
+        output_dir=tmp_path / "run", wait_for_key=lambda: None,
+        reuse_session_evidence=evidence)
+    assert events == ["attach", "detach"]
 
 
 @pytest.mark.parametrize("explicit_output", (False, True))

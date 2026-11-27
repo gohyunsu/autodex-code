@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import time
 from uuid import uuid4
@@ -18,7 +19,10 @@ import cv2
 import numpy as np
 
 from precision_insertion.assets import AssetPaths
-from precision_insertion.camera_stream import open_autodex_camera_stream
+from precision_insertion.camera_stream import (
+    attach_running_autodex_camera_stream,
+    open_autodex_camera_stream,
+)
 from precision_insertion.live_capture import collect_socket_capture
 from precision_insertion.session_launch import load_session_launch, open_session_cameras
 
@@ -59,10 +63,15 @@ def main(argv: list[str] | None = None) -> int:
     prompt = args.prompt or ("white plastic cylindrical key" if args.target == "key"
                              else launch.socket_prompt)
     paths = AssetPaths(launch.shared_root, launch.mode)
-    with open_autodex_camera_stream(
+    if os.environ.get("PRECISION_ATTACH_CAMERAS") == "1":
+        stream_context = attach_running_autodex_camera_stream(
+            launch.pc_list, launch.capture_ips)
+    else:
+        stream_context = open_autodex_camera_stream(
             launch.pc_list, capture_ips=launch.capture_ips,
             name="precision_inline_transport_probe", warmup_s=1,
-            acquisition_mode=launch.camera_acquisition_mode):
+            acquisition_mode=launch.camera_acquisition_mode)
+    with stream_context:
         with open_session_cameras(
                 launch, init_ports=(15006, 15007, 16893)) as cameras:
             start = time.perf_counter()
