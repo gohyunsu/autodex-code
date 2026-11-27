@@ -201,7 +201,7 @@ def plan_nominal_postlift_transfer(
     spec = end_effector_spec(joint_sample.end_effector)
     pickup_key = None
     pickup_hand = None
-    if spec.name == "franka_gripper":
+    if spec.is_parallel_gripper:
         pickup_key = validate_se3(cart2se3(np.asarray(
             trial.trial_scene["mesh"]["target"]["pose"], dtype=np.float64)),
             name="initial analytic pickup T_robot_key")

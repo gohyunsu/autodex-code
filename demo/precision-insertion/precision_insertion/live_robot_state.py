@@ -16,7 +16,9 @@ import time
 import numpy as np
 
 from autodex.utils.sync import convert_inspire_raw
-from .end_effector import hand_q_from_gripper_width, normalize_end_effector
+from .end_effector import (
+    end_effector_spec, hand_q_from_gripper_width, normalize_end_effector,
+)
 
 
 class FrankaStateUnavailable(ValueError):
@@ -54,7 +56,7 @@ class LiveRobotState:
         if self.source != "robot_joint_feedback":
             raise ValueError("hand pose is not measured robot feedback")
         end_effector = normalize_end_effector(self.end_effector)
-        hand_dof = 2 if end_effector == "franka_gripper" else 6
+        hand_dof = end_effector_spec(end_effector).hand_dof
         q = _finite_vector(self.full_q, 7 + hand_dof,
                            f"FR3/{end_effector} full qpos")
         velocity = _finite_vector(self.arm_qvel, 7, "FR3 qvel")
@@ -70,10 +72,18 @@ class LiveRobotState:
                     np.any(commanded < 0) or np.any(commanded > 1000)):
                 raise ValueError("Inspire feedback/action lies outside 0..1000")
             expected_hand = convert_inspire_raw(measured[None, :])[0]
-        else:
+        elif end_effector == "franka_gripper":
             if (np.any(measured < 0) or np.any(measured > 0.04 + 1e-8) or
                     np.any(commanded < 0) or np.any(commanded > 0.04 + 1e-8)):
                 raise ValueError("Franka finger joints lie outside 0..0.04 m")
+            expected_hand = measured
+            if self.gripper_grasping is not None and type(
+                    self.gripper_grasping) is not bool:
+                raise ValueError("gripper_grasping must be Boolean when present")
+        else:
+            if (np.any(measured < 0) or np.any(measured > 0.8 + 1e-8) or
+                    np.any(commanded < 0) or np.any(commanded > 0.8 + 1e-8)):
+                raise ValueError("Robotiq planner joint lies outside 0..0.8 rad")
             expected_hand = measured
             if self.gripper_grasping is not None and type(
                     self.gripper_grasping) is not bool:
@@ -298,6 +308,71 @@ def read_live_franka_gripper_state(
                 arm=arm, max_sample_age_s=max_sample_age_s,
                 max_arm_velocity_rad_s=max_arm_velocity_rad_s)
         except FrankaStateUnavailable:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
+
+
+def _read_live_franka_robotiq_state_once(
+    *, arm, hand, max_arm_hand_skew_s: float, max_sample_age_s: float,
+    max_arm_velocity_rad_s: float,
+) -> LiveRobotState:
+    """Pair the FR3 daemon packet with Capture4 Robotiq feedback."""
+    hand_data = hand.get_data()
+    arm_data = arm.get_data()
+    if not isinstance(arm_data, dict):
+        raise FrankaStateUnavailable("FR3 state stream is unavailable")
+    if not isinstance(hand_data, dict):
+        raise FeedbackTimeAlignmentUnavailable("Robotiq feedback is unavailable")
+    uptime = float(arm_data.get("time", float("nan")))
+    age = time.monotonic() - uptime
+    if not math.isfinite(age) or age < 0 or age > max_sample_age_s:
+        raise FrankaStateUnavailable("FR3 state stream is stale")
+    arm_time = time.time() - age
+    hand_time = float(hand_data.get("time", float("nan")))
+    if (not math.isfinite(hand_time) or hand_time <= 0 or
+            abs(arm_time - hand_time) > max_arm_hand_skew_s or
+            time.time() - hand_time > max_sample_age_s):
+        raise FeedbackTimeAlignmentUnavailable(
+            "FR3/Robotiq feedback is stale or not time-aligned")
+    arm_q = _finite_vector(arm_data.get("qpos"), 7, "FR3 qpos")
+    arm_qvel = _finite_vector(arm_data.get("qvel"), 7, "FR3 qvel")
+    measured = _finite_vector(hand_data.get("qpos"), 1,
+                              "Robotiq measured qpos")
+    commanded = _finite_vector(hand_data.get("action"), 1,
+                               "Robotiq requested qpos")
+    error = float(np.max(np.abs(measured - commanded)))
+    result = LiveRobotState(
+        full_q=np.concatenate([arm_q, measured]), arm_qvel=arm_qvel,
+        sample_timestamp_s=(arm_time + hand_time) / 2.0,
+        arm_timestamp_s=arm_time, arm_robot_uptime_s=uptime,
+        hand_timestamp_s=hand_time, hand_raw_measured=measured,
+        hand_raw_commanded=commanded, max_hand_command_error_raw=error,
+        wrench=_finite_vector(arm_data.get("wrench"), 6, "FR3 wrench"),
+        end_effector="robotiq_2f85",
+        gripper_grasping=int(hand_data.get("object_state", 0)) == 2,
+    )
+    result.validate(
+        max_arm_hand_skew_s=max_arm_hand_skew_s,
+        max_hand_command_error_raw=1.0,
+        max_arm_velocity_rad_s=max_arm_velocity_rad_s)
+    return result
+
+
+def read_live_franka_robotiq_state(
+    *, arm, hand, max_arm_hand_skew_s: float, max_sample_age_s: float,
+    max_arm_velocity_rad_s: float, max_feedback_wait_s: float = 5.0,
+) -> LiveRobotState:
+    """Wait for one fresh, paired FR3/Robotiq state."""
+    deadline = time.monotonic() + float(max_feedback_wait_s)
+    while True:
+        try:
+            return _read_live_franka_robotiq_state_once(
+                arm=arm, hand=hand,
+                max_arm_hand_skew_s=max_arm_hand_skew_s,
+                max_sample_age_s=max_sample_age_s,
+                max_arm_velocity_rad_s=max_arm_velocity_rad_s)
+        except (FrankaStateUnavailable, FeedbackTimeAlignmentUnavailable):
             if time.monotonic() >= deadline:
                 raise
             time.sleep(0.01)

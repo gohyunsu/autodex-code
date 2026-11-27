@@ -63,10 +63,11 @@ export PYTHONPATH="${PRECISION_CUROBO_PYTHONPATH:+$PRECISION_CUROBO_PYTHONPATH:}
 export PRECISION_TIMING_LOCAL_ROOT=${PRECISION_TIMING_LOCAL_ROOT:-/tmp/precision-insertion-timing}
 export PRECISION_FR3_INSPIRE_URDF=${PRECISION_FR3_INSPIRE_URDF:-$ROOT/autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire_oct12_mount.urdf}
 export PRECISION_FR3_GRIPPER_URDF=${PRECISION_FR3_GRIPPER_URDF:-$ROOT/autodex/planner/src/curobo/content/assets/robot/fr3_gripper_description/fr3_gripper.urdf}
+export PRECISION_FR3_ROBOTIQ_URDF=${PRECISION_FR3_ROBOTIQ_URDF:-$ROOT/autodex/planner/src/curobo/content/assets/robot/fr3_robotiq_2f85_description/fr3_robotiq_2f85.urdf}
 END_EFFECTOR=${PRECISION_END_EFFECTOR:-inspire}
 case "$END_EFFECTOR" in
-  inspire|franka_gripper) ;;
-  *) echo "PRECISION_END_EFFECTOR must be inspire or franka_gripper" >&2; exit 2 ;;
+  inspire|franka_gripper|robotiq_2f85) ;;
+  *) echo "PRECISION_END_EFFECTOR must be inspire, franka_gripper, or robotiq_2f85" >&2; exit 2 ;;
 esac
 export PRECISION_VLM_CAMERA_IDS=${PRECISION_VLM_CAMERA_IDS:-24122734,25305463,25322638,25322649,25305461}
 PRECISION_XY_ESTIMATOR=${PRECISION_XY_ESTIMATOR:-vlm}
@@ -76,6 +77,8 @@ LABEL_MODE=${PRECISION_LABEL_MODE:-vlm_only}
 LAUNCH_TEMPLATE=${PRECISION_LAUNCH_TEMPLATE:-$STAGE/launch.json}
 if [[ "$END_EFFECTOR" == franka_gripper ]]; then
   DEFAULT_CATALOG="$STAGE/recipient_gap${GAP_MM}_endpoint_catalog_franka_gripper.json"
+elif [[ "$END_EFFECTOR" == robotiq_2f85 ]]; then
+  DEFAULT_CATALOG="$STAGE/recipient_gap${GAP_MM}_endpoint_catalog_robotiq_2f85.json"
 else
   DEFAULT_CATALOG="$STAGE/recipient_gap${GAP_MM}_endpoint_catalog.json"
 fi

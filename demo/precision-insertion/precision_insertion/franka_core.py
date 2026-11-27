@@ -19,7 +19,7 @@ from .clear_view import ClearViewForPerception
 from .feedback_buffer import ExposureStateBuffer, RobotFeedbackSampler
 from .live_robot_state import (
     LiveRobotState, read_live_franka_gripper_state,
-    read_live_franka_inspire_state,
+    read_live_franka_inspire_state, read_live_franka_robotiq_state,
 )
 from .end_effector import end_effector_spec
 from .mount_geometry import link8_to_hand
@@ -89,10 +89,18 @@ class FrankaRuntimeCore:
                 settings.max_sampling_arm_velocity_rad_s))
 
         def sample_state() -> LiveRobotState:
-            if end_effector_spec(getattr(
-                    self.executor, "hand_name", "inspire")).name == "franka_gripper":
+            sample_spec = end_effector_spec(getattr(
+                self.executor, "hand_name", "inspire"))
+            if sample_spec.name == "franka_gripper":
                 return read_live_franka_gripper_state(
                     arm=self.executor.arm,
+                    max_sample_age_s=self.feedback.max_sample_age_s,
+                    max_arm_velocity_rad_s=(
+                        settings.max_sampling_arm_velocity_rad_s))
+            if sample_spec.name == "robotiq_2f85":
+                return read_live_franka_robotiq_state(
+                    arm=self.executor.arm, hand=self.executor.hand,
+                    max_arm_hand_skew_s=self.feedback.max_arm_hand_skew_s,
                     max_sample_age_s=self.feedback.max_sample_age_s,
                     max_arm_velocity_rad_s=(
                         settings.max_sampling_arm_velocity_rad_s))
@@ -192,6 +200,12 @@ def open_franka_core(
             if spec.name == "franka_gripper":
                 return read_live_franka_gripper_state(
                     arm=executor.arm,
+                    max_sample_age_s=feedback.max_sample_age_s,
+                    max_arm_velocity_rad_s=feedback.max_arm_velocity_rad_s)
+            if spec.name == "robotiq_2f85":
+                return read_live_franka_robotiq_state(
+                    arm=executor.arm, hand=executor.hand,
+                    max_arm_hand_skew_s=feedback.max_arm_hand_skew_s,
                     max_sample_age_s=feedback.max_sample_age_s,
                     max_arm_velocity_rad_s=feedback.max_arm_velocity_rad_s)
             return read_live_franka_inspire_state(

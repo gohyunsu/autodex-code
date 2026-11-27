@@ -114,7 +114,7 @@ def _scene_pose(shared_root: Path, mode: TaskMode,
 
 def _grasp_evidence(candidate: Path, key_mesh: Path) -> tuple[bool, str]:
     spec = end_effector_spec()
-    if spec.name == "franka_gripper":
+    if spec.is_parallel_gripper:
         required = ("wrist_se3.npy", "pregrasp_pose.npy", "grasp_pose.npy",
                     "analytic_grasp.json")
         missing = [name for name in required if not (candidate / name).is_file()]
@@ -125,13 +125,21 @@ def _grasp_evidence(candidate: Path, key_mesh: Path) -> tuple[bool, str]:
                          name="analytic T_key_hand")
             for name in ("pregrasp_pose.npy", "grasp_pose.npy"):
                 joints = np.asarray(np.load(candidate / name, allow_pickle=False))
-                if joints.shape != (2,) or not np.all(np.isfinite(joints)):
+                if (joints.shape != (spec.hand_dof,) or
+                        not np.all(np.isfinite(joints))):
                     return False, f"invalid:{name}"
             record = _json(candidate / "analytic_grasp.json")
-            if (record.get("schema") !=
-                    "precision_insertion_franka_gripper_analytic_grasp_v1" or
-                    record.get("key_object") != "precision_key_cylinder_r15_h80" or
-                    record.get("gripper") != "franka_stock_parallel_gripper"):
+            valid_legacy = (
+                spec.name == "franka_gripper" and record.get("schema") ==
+                "precision_insertion_franka_gripper_analytic_grasp_v1" and
+                record.get("gripper") == "franka_stock_parallel_gripper")
+            valid_generic = (
+                record.get("schema") ==
+                "precision_insertion_parallel_gripper_analytic_grasp_v2" and
+                record.get("end_effector") == spec.name)
+            if (record.get("key_object") !=
+                    "precision_key_cylinder_r15_h80" or
+                    not (valid_legacy or valid_generic)):
                 return False, "invalid_analytic_grasp_contract"
         except (OSError, ValueError, KeyError, TypeError) as exc:
             return False, f"invalid_gripper_grasp_evidence:{exc}"
@@ -295,7 +303,7 @@ def build_endpoint_catalog(
                 "sim_traj": candidate / "sim_traj.json",
                 "coll_valid": candidate / "coll_valid.npy",
             }
-            if end_effector_spec().name == "franka_gripper":
+            if end_effector_spec().is_parallel_gripper:
                 grasp_inputs = {
                     "key_planning_mesh": paths.key_planning_mesh,
                     "wrist_se3": candidate / "wrist_se3.npy",

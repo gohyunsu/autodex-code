@@ -53,6 +53,7 @@ from autodex.utils.robot_config import (
     INIT_STATE, XARM_INIT, INSPIRE_INIT, FR3_INIT,
     ALLEGRO_LINK6_TO_WRIST, INSPIRE_LINK6_TO_WRIST, INSPIRE_LEFT_LINK6_TO_WRIST,
     FR3_INSPIRE_LINK_TO_WRIST, FR3_GRIPPER_LINK_TO_WRIST,
+    FR3_ROBOTIQ_2F85_LINK_TO_WRIST,
 )
 from .jacobian_stroke import (
     JacobianStrokeOptions,
@@ -304,6 +305,9 @@ class GraspPlanner:
         # floating-hand cfg and numerics are shared; only the arm differs.
         "fr3_inspire":  ("fr3_inspire.yml",       "inspire_floating.yml",      0.005, 32, InterpolateType.LINEAR_CUDA),
         "fr3_gripper":  ("fr3_gripper.yml",       "franka_gripper_floating.yml", 0.005, 32, InterpolateType.LINEAR_CUDA),
+        "fr3_robotiq_2f85": ("fr3_robotiq_2f85.yml",
+                              "robotiq_2f85_floating.yml", 0.005, 32,
+                              InterpolateType.LINEAR_CUDA),
     }
 
     def __init__(self, robot_cfg_path: Optional[str] = None, hand_cfg_path: Optional[str] = None,
@@ -371,6 +375,11 @@ class GraspPlanner:
                 FR3_INIT, np.asarray([0.04, 0.04])]).astype(np.float32)
             self._link6_to_wrist_rot = FR3_GRIPPER_LINK_TO_WRIST[:3, :3]
             self._n_arm = len(FR3_INIT)
+        elif hand == "fr3_robotiq_2f85":
+            self._init_state = np.concatenate([
+                FR3_INIT, np.asarray([0.0])]).astype(np.float32)
+            self._link6_to_wrist_rot = FR3_ROBOTIQ_2F85_LINK_TO_WRIST[:3, :3]
+            self._n_arm = len(FR3_INIT)
         elif hand.startswith("inspire"):
             self._init_state = np.concatenate([XARM_INIT, INSPIRE_INIT]).astype(np.float32)
             self._link6_to_wrist_rot = INSPIRE_LINK6_TO_WRIST[:3, :3]
@@ -391,7 +400,8 @@ class GraspPlanner:
         # The historical backward test is an Allegro/xArm convention. Both
         # FR3 mounted end effectors are evaluated by collision/IK instead.
         self._ignore_backward_filter = ("inspire" in hand or
-                                        hand == "fr3_gripper")
+                                        hand in {"fr3_gripper",
+                                                 "fr3_robotiq_2f85"})
         self._use_cuda_graph = use_cuda_graph
         # Candidate searches deliberately test many paths expected to fail.
         # Detailed cuRobo checks and collision-mesh exports are opt-in.

@@ -50,7 +50,7 @@ class ClearViewForPerception:
         if (getattr(self.executor, "arm_dof", None) != 7 or
                 end_effector_spec(getattr(
                     self.executor, "hand_name", None)).name not in
-                {"inspire", "franka_gripper"}):
+                {"inspire", "franka_gripper", "robotiq_2f85"}):
             raise TypeError(
                 "precision insertion needs the 7-DOF FrankaExecutor; "
                 "AutoDex RealExecutor controls xArm")

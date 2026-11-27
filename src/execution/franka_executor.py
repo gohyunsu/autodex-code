@@ -40,7 +40,7 @@ from autodex.executor.timing import (
 )
 from autodex.utils.robot_config import (
     FR3_INIT, FR3_CLEAR_VIEW, INSPIRE_INIT, FR3_INSPIRE_LINK_TO_WRIST,
-    FR3_GRIPPER_LINK_TO_WRIST,
+    FR3_GRIPPER_LINK_TO_WRIST, FR3_ROBOTIQ_2F85_LINK_TO_WRIST,
 )
 from autodex.utils.conversion import cart2se3, se32cart
 from autodex.executor.real import _convert_inspire   # rad -> 0-1000 controller units
@@ -92,8 +92,10 @@ class ContactAbort(RuntimeError):
 class FrankaExecutor:
     # Preserve the historical Inspire contract for lightweight test doubles
     # and old subclasses that allocate with object.__new__.  Normal live
-    # construction always overwrites both fields in __init__.
+    # construction always overwrites these fields in __init__.
     hand_name = "inspire"
+    _is_stock_gripper = False
+    _is_robotiq = False
     _is_parallel_gripper = False
 
     def __init__(self, hand_name: str = "inspire", dt: float = 0.01,
@@ -109,13 +111,19 @@ class FrankaExecutor:
                  gripper_force_n: float = 60.0,
                  gripper_speed_m_s: float = 0.05):
         aliases = {"gripper": "franka_gripper",
-                   "stock_gripper": "franka_gripper"}
+                   "stock_gripper": "franka_gripper",
+                   "robotiq": "robotiq_2f85",
+                   "robotiq_85": "robotiq_2f85",
+                   "2f85": "robotiq_2f85"}
         hand_name = aliases.get(hand_name, hand_name)
-        assert hand_name in ("inspire", "inspire_left", "franka_gripper"), \
+        assert hand_name in (
+            "inspire", "inspire_left", "franka_gripper", "robotiq_2f85"), \
             f"unsupported Franka end effector: {hand_name}"
         self.dt = dt
         self.hand_name = hand_name
-        self._is_parallel_gripper = hand_name == "franka_gripper"
+        self._is_stock_gripper = hand_name == "franka_gripper"
+        self._is_robotiq = hand_name == "robotiq_2f85"
+        self._is_parallel_gripper = self._is_stock_gripper or self._is_robotiq
         if (not np.isfinite(gripper_force_n) or gripper_force_n <= 0 or
                 not np.isfinite(gripper_speed_m_s) or gripper_speed_m_s <= 0):
             raise ValueError("Franka gripper force and speed must be positive")
@@ -188,8 +196,8 @@ class FrankaExecutor:
         # that ``execute`` would otherwise undo at the next approach.
         self.retract_goal = self._clear_view
         self._hand_init = np.asarray(
-            [0.04, 0.04] if self._is_parallel_gripper else INSPIRE_INIT,
-            dtype=np.float64)
+            ([0.04, 0.04] if self._is_stock_gripper else
+             [0.0] if self._is_robotiq else INSPIRE_INIT), dtype=np.float64)
         # Finger config (planner order, radians) the hand was last commanded to.
         # reset() plans its retract from this, so it must track reality.
         self._last_hand_qpos = self._hand_init.copy()
@@ -200,9 +208,12 @@ class FrankaExecutor:
             else _convert_inspire(self._hand_init))
         # Historical private name used by other AutoDex helpers. For FR3 this
         # maps the measured O_T_EE frame (URDF fr3_link8) to Inspire base_link.
+        selected_ee_to_hand = (
+            FR3_GRIPPER_LINK_TO_WRIST.copy() if self._is_stock_gripper else
+            FR3_ROBOTIQ_2F85_LINK_TO_WRIST.copy() if self._is_robotiq else
+            _FR3_DEFAULT_EE_TO_WRIST)
         self._link6_to_wrist = np.asarray(
-            ((FR3_GRIPPER_LINK_TO_WRIST.copy() if self._is_parallel_gripper
-              else _FR3_DEFAULT_EE_TO_WRIST)
+            (selected_ee_to_hand
              if ee_to_hand is None else ee_to_hand),
             dtype=np.float64).copy()
         if self._link6_to_wrist.shape != (4, 4):
@@ -225,7 +236,19 @@ class FrankaExecutor:
 
         from paradex.io.robot_controller import get_arm, get_hand
         self.arm = get_arm("franka")
-        self.hand = self.arm if self._is_parallel_gripper else get_hand(hand_name)
+        if self._is_stock_gripper:
+            self.hand = self.arm
+        elif self._is_robotiq:
+            from precision_insertion.robotiq_remote import RobotiqRemote
+            self.hand = RobotiqRemote()
+            self.hand.ping()
+            robotiq_state = self.hand.read_state()
+            if not bool(robotiq_state.get("activated", False)):
+                raise RuntimeError(
+                    "Capture4 Robotiq is not activated; activate it explicitly "
+                    "before constructing the executor")
+        else:
+            self.hand = get_hand(hand_name)
 
         # A previous run killed mid-motion (watchdog SIGKILL) leaves the daemon's
         # velocity stream ACTIVE, and that stream holds g_robot_mutex — every
@@ -303,16 +326,20 @@ class FrankaExecutor:
         (only ``-1`` is special-cased), so e.g. -25 reaches the hand as 65511
         and the finger jumps to a garbage angle — which then gets HELD for the
         whole lift via the ``hold`` array."""
-        upper = 0.04 if self._is_parallel_gripper else 1000.0
+        upper = (0.04 if self._is_stock_gripper else
+                 0.8 if self._is_robotiq else 1000.0)
         return np.clip(np.asarray(action, dtype=np.float64), 0.0, upper)
 
     def _move_hand(self, action: np.ndarray):
         action = self._clip_hand(action)
-        if self._is_parallel_gripper:
+        if self._is_stock_gripper:
             response = self.arm.open_gripper(
                 width=float(np.sum(action)), speed=self.gripper_speed_m_s)
             if isinstance(response, dict) and response.get("type") == "error":
                 raise RuntimeError(response.get("message", "gripper open failed"))
+            self._last_hand_qpos = action.copy()
+        elif self._is_robotiq:
+            self.hand.move(action)
             self._last_hand_qpos = action.copy()
         else:
             self.hand.move(action)
@@ -320,19 +347,23 @@ class FrankaExecutor:
         time.sleep(self.dt)
 
     def _close_parallel_gripper(self) -> np.ndarray:
-        """Force-close once and return measured two-finger planner joints."""
-        response = self.arm.grasp(
-            force=self.gripper_force_n, speed=self.gripper_speed_m_s,
-            eps_inner=0.005, eps_outer=0.005)
-        if isinstance(response, dict) and response.get("type") == "error":
-            raise RuntimeError(response.get("message", "gripper grasp failed"))
-        state = self.arm.get_data() or {}
-        width = float(state.get("gripper_width", np.nan))
-        if not np.isfinite(width):
-            width = (float(response.get("final_width", 0.03))
-                     if isinstance(response, dict) else 0.03)
-        q = np.asarray([np.clip(width * 0.5, 0.0, 0.04)] * 2,
-                       dtype=np.float64)
+        """Close once and return the measured planner-space joint state."""
+        if self._is_robotiq:
+            q = self.hand.close_until_contact()
+        else:
+            response = self.arm.grasp(
+                force=self.gripper_force_n, speed=self.gripper_speed_m_s,
+                eps_inner=0.005, eps_outer=0.005)
+            if isinstance(response, dict) and response.get("type") == "error":
+                raise RuntimeError(response.get(
+                    "message", "gripper grasp failed"))
+            state = self.arm.get_data() or {}
+            width = float(state.get("gripper_width", np.nan))
+            if not np.isfinite(width):
+                width = (float(response.get("final_width", 0.03))
+                         if isinstance(response, dict) else 0.03)
+            q = np.asarray([np.clip(width * 0.5, 0.0, 0.04)] * 2,
+                           dtype=np.float64)
         self._last_hand_qpos = q.copy()
         self._last_hand_action = q.copy()
         return q
@@ -570,12 +601,16 @@ class FrankaExecutor:
 
     def get_hand_qpos(self) -> tuple[np.ndarray, str]:
         """Return planner-space hand state with truthful measurement provenance."""
-        if self._is_parallel_gripper:
+        if self._is_stock_gripper:
             width = float(self.arm.get_data()["gripper_width"])
             q = np.asarray([np.clip(width * 0.5, 0.0, 0.04)] * 2,
                            dtype=np.float64)
             self._last_hand_qpos = q.copy()
             return q, "measured_franka_gripper_width"
+        if self._is_robotiq:
+            q = np.asarray(self.hand.get_data()["qpos"], dtype=np.float64)
+            self._last_hand_qpos = q.copy()
+            return q, "measured_robotiq_rpr"
         return (np.asarray(self._last_hand_qpos, dtype=np.float64).copy(),
                 "commanded_nominal")
 
@@ -1132,12 +1167,12 @@ class FrankaExecutor:
     def start_recording(self, save_dir: str):
         import os
         os.makedirs(save_dir, exist_ok=True)
-        if not self._is_parallel_gripper:
+        if not self._is_parallel_gripper or self._is_robotiq:
             self.hand.start(os.path.join(save_dir, "hand"))
         self.arm.start(os.path.join(save_dir, "arm"))
 
     def stop_recording(self):
-        controllers = ((self.arm,) if self._is_parallel_gripper
+        controllers = ((self.arm,) if self._is_stock_gripper
                        else (self.arm, self.hand))
         for ctrl in controllers:
             if (getattr(ctrl, "save_path", None) is not None
@@ -1960,7 +1995,7 @@ class FrankaExecutor:
                                                        cancel_futures=True)
         except Exception:
             pass
-        controllers = ((self.arm,) if self._is_parallel_gripper
+        controllers = ((self.arm,) if self._is_stock_gripper
                        else (self.arm, self.hand))
         for ctrl in controllers:
             try:

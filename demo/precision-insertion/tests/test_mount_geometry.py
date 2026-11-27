@@ -19,6 +19,9 @@ from precision_insertion.mount_geometry import (  # noqa: E402
 URDF_PATH = (Path(__file__).resolve().parents[3] / "autodex" / "planner" /
              "src" / "curobo" / "content" / "assets" / "robot" /
              "fr3_inspire_description" / "fr3_inspire_oct12_mount.urdf")
+ROBOTIQ_URDF = (Path(__file__).resolve().parents[3] / "autodex" / "planner" /
+                "src" / "curobo" / "content" / "assets" / "robot" /
+                "fr3_robotiq_2f85_description" / "fr3_robotiq_2f85.urdf")
 
 
 def test_saved_october_grasp_fk_and_executor_mount_agree(monkeypatch):
@@ -75,3 +78,17 @@ def test_saved_fr3_otee_is_link8_frame_and_needs_only_flange_to_hand():
         hand[:3, :3].T @ predicted_hand[:3, :3]).magnitude() < 1e-4
     wrong_hand = observed_ee @ link7_to_hand(URDF_PATH)
     assert np.linalg.norm(wrong_hand[:3, 3] - hand[:3, 3]) > .106
+
+
+def test_robotiq_urdf_has_one_active_joint_and_straight_mount():
+    robot = URDF.load(str(ROBOTIQ_URDF), load_meshes=False,
+                      build_scene_graph=True)
+    assert robot.actuated_joint_names == [
+        *(f"fr3_joint{i}" for i in range(1, 8)),
+        "robotiq_85_left_knuckle_joint",
+    ]
+    mount = link8_to_hand(ROBOTIQ_URDF)
+    np.testing.assert_allclose(mount[:3, 3], 0.0, atol=1e-12)
+    np.testing.assert_allclose(
+        mount[:3, :3], Rotation.from_euler("z", 90, degrees=True).as_matrix(),
+        atol=1e-12)

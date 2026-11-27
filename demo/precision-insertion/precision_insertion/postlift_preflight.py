@@ -181,7 +181,7 @@ def plan_postlift_observed_transfer(
     wrist_robot = validate_se3(planner.fk_wrist(start),
                                name="measured post-lift wrist FK")
     candidate_dir = Path(matches[0]["candidate_dir"]).expanduser().resolve()
-    if spec.name == "franka_gripper":
+    if spec.is_parallel_gripper:
         pickup_key = validate_se3(cart2se3(np.asarray(
             trial.trial_scene["mesh"]["target"]["pose"], dtype=np.float64)),
             name="initial analytic pickup T_robot_key")

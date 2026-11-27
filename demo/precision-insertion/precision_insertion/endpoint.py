@@ -79,19 +79,26 @@ def _hand_link_meshes(robot_urdf: Path, grasp_q: np.ndarray) -> dict:
                 not all(name.startswith("fr3_") for name in joints[:7])):
             raise ValueError(f"unexpected FR3/{spec.name} URDF joint contract")
         robot.update_cfg(dict(zip(joints, np.concatenate([np.zeros(7), hand_q]))))
-        hand_base_name = ("base_link" if spec.name == "inspire" else
-                          "fr3_hand")
+        hand_base_name = {
+            "inspire": "base_link",
+            "franka_gripper": "fr3_hand",
+            "robotiq_2f85": "robotiq_85_base_link",
+        }[spec.name]
         hand_base = np.asarray(robot.get_transform(hand_base_name, robot.base_link),
                                dtype=np.float64)
         hand_base_inverse = np.linalg.inv(hand_base)
         result = {}
         for name, mesh in robot.scene.geometry.items():
-            selected = ((name.startswith("base_link") or
-                         name.startswith("right_")) if spec.name == "inspire"
-                        # yourdfpy names unnamed Franka visual nodes from the
-                        # mesh basename (hand.dae/finger.dae), not the link.
-                        else name.startswith("hand.") or
-                        name.startswith("finger."))
+            if spec.name == "inspire":
+                selected = (name.startswith("base_link") or
+                            name.startswith("right_"))
+            elif spec.name == "franka_gripper":
+                # yourdfpy names unnamed Franka visual nodes from the mesh
+                # basename (hand.dae/finger.dae), not the link.
+                selected = (name.startswith("hand.") or
+                            name.startswith("finger."))
+            else:
+                selected = not name.startswith("fr3_link")
             if not selected:
                 continue
             geometry_world, _ = robot.scene.graph.get(name)
@@ -145,10 +152,12 @@ def nominal_hold_poses(pregrasp_q: np.ndarray,
         return nominal_inspire_hold_poses(pregrasp_q, grasp_q)
     pre = np.asarray(pregrasp_q, dtype=np.float64).reshape(-1)
     grasp = np.asarray(grasp_q, dtype=np.float64).reshape(-1)
-    if (pre.shape != (2,) or grasp.shape != (2,) or
+    if (pre.shape != (spec.hand_dof,) or grasp.shape != (spec.hand_dof,) or
             not np.all(np.isfinite(pre)) or not np.all(np.isfinite(grasp))):
-        raise ValueError("Franka gripper pregrasp/grasp must have two joints")
-    return {"franka_gripper_nominal_contact": np.clip(grasp, 0.0, 0.04)}
+        raise ValueError(
+            f"{spec.name} pregrasp/grasp must have {spec.hand_dof} joints")
+    upper = 0.04 if spec.name == "franka_gripper" else 0.8
+    return {f"{spec.name}_nominal_contact": np.clip(grasp, 0.0, upper)}
 
 
 def _coal_mesh(mesh):

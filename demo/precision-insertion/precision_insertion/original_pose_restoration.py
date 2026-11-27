@@ -97,7 +97,7 @@ def plan_original_pose_restoration(
         scene["mesh"]["target"]["pose"], dtype=float)),
         name="fresh tabletop T_robot_key")
     support_normal_robot = None
-    if spec.name == "franka_gripper":
+    if spec.is_parallel_gripper:
         if mode.family != "cylinder":
             raise ValueError(
                 "deterministic Franka-gripper restoration supports cylinder mode")
@@ -161,11 +161,11 @@ def plan_original_pose_restoration(
     for row in rows:
         key = tuple(row["key"])
         analytic = None
-        if spec.name == "franka_gripper":
+        if spec.is_parallel_gripper:
             assert support_normal_robot is not None
             analytic = analytic_franka_gripper_grasp_for_candidate(
                 observed, table_normal_robot=support_normal_robot,
-                identifier=key)
+                identifier=key, end_effector=spec.name)
             override = analytic.candidate_override(identifier=key)
         else:
             override = planner_candidate_override(

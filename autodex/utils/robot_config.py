@@ -109,6 +109,17 @@ FR3_GRIPPER_LINK_TO_WRIST = np.array([
     [ 0.0,         0.0,        0.0, 1.0]
 ])
 
+# ZeroDex's Robotiq 2F-85 is attached directly to fr3_link8 by the straight
+# adapter.  The commissioned CAD/extrinsic convention rotates the Robotiq base
+# +90 degrees about the flange z axis; there is no additional axial offset.
+# This maps the measured libfranka O_T_EE frame to robotiq_85_base_link.
+FR3_ROBOTIQ_2F85_LINK_TO_WRIST = np.array([
+    [0.0, -1.0, 0.0, 0.0],
+    [1.0,  0.0, 0.0, 0.0],
+    [0.0,  0.0, 1.0, 0.0],
+    [0.0,  0.0, 0.0, 1.0],
+])
+
 # ── Defaults (allegro) ──────────────────────────────────────────────────────
 INIT_STATE = np.concatenate([XARM_INIT, ALLEGRO_INIT])
 LINK6_TO_WRIST = ALLEGRO_LINK6_TO_WRIST

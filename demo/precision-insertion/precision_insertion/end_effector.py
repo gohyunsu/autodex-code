@@ -25,6 +25,10 @@ class EndEffectorSpec:
     feedback_units: str
 
     @property
+    def is_parallel_gripper(self) -> bool:
+        return self.name in {"franka_gripper", "robotiq_2f85"}
+
+    @property
     def full_dof(self) -> int:
         return 7 + self.hand_dof
 
@@ -41,6 +45,13 @@ _SPECS = {
         # Each URDF prismatic joint is one half of the reported total width.
         open_q=np.asarray([0.04, 0.04], dtype=np.float64),
         feedback_units="finger_displacement_m"),
+    "robotiq_2f85": EndEffectorSpec(
+        name="robotiq_2f85", planner_hand="fr3_robotiq_2f85",
+        asset_namespace="robotiq_2f85", hand_dof=1,
+        # The official URDF's one independent knuckle joint is 0 rad open and
+        # 0.8 rad fully closed.  The remaining five joints are mimics.
+        open_q=np.asarray([0.0], dtype=np.float64),
+        feedback_units="robotiq_rpr_0_255"),
 }
 
 
@@ -52,11 +63,16 @@ def normalize_end_effector(name: str | None) -> str:
         "stock_gripper": "franka_gripper",
         "parallel_gripper": "franka_gripper",
         "franka_hand": "franka_gripper",
+        "robotiq": "robotiq_2f85",
+        "robotiq_85": "robotiq_2f85",
+        "2f85": "robotiq_2f85",
+        "2f_85": "robotiq_2f85",
     }
     value = aliases.get(value, value)
     if value not in _SPECS:
         raise ValueError(
-            "PRECISION_END_EFFECTOR must be inspire or franka_gripper")
+            "PRECISION_END_EFFECTOR must be inspire, franka_gripper, or "
+            "robotiq_2f85")
     return value
 
 
@@ -77,6 +93,7 @@ def planner_end_effector_spec(planner) -> EndEffectorSpec:
     name = {
         "fr3_inspire": "inspire",
         "fr3_gripper": "franka_gripper",
+        "fr3_robotiq_2f85": "robotiq_2f85",
     }.get(planner_hand)
     if name is None:
         # Older planner test doubles and archived adapters predate the explicit
@@ -88,7 +105,11 @@ def planner_end_effector_spec(planner) -> EndEffectorSpec:
         raise ValueError(
             f"unsupported precision planner hand: {planner_hand!r}")
     spec = end_effector_spec(name)
-    expected_link = "base_link" if spec.name == "inspire" else "fr3_hand"
+    expected_link = {
+        "inspire": "base_link",
+        "franka_gripper": "fr3_hand",
+        "robotiq_2f85": "robotiq_85_base_link",
+    }[spec.name]
     ee_link = getattr(planner, "_robot_cfg", {}).get(
         "kinematics", {}).get("ee_link")
     if getattr(planner, "_n_arm", None) != 7 or ee_link != expected_link:
@@ -122,3 +143,27 @@ def gripper_width_from_hand_q(hand_q: np.ndarray) -> float:
             np.any(q < -1e-6) or np.any(q > 0.04 + 1e-6)):
         raise ValueError("Franka gripper planner q must contain two finger joints")
     return float(np.clip(q.sum(), 0.0, 0.08))
+
+
+ROBOTIQ_MAX_JOINT_RAD = 0.8
+ROBOTIQ_MAX_POSITION = 255
+
+
+def robotiq_q_from_position(position: int | float) -> np.ndarray:
+    """Map the Robotiq rPR status byte to its independent URDF joint."""
+    value = float(position)
+    if not np.isfinite(value) or value < 0.0 or value > ROBOTIQ_MAX_POSITION:
+        raise ValueError("Robotiq position must be finite and in [0, 255]")
+    return np.asarray([
+        value / ROBOTIQ_MAX_POSITION * ROBOTIQ_MAX_JOINT_RAD
+    ], dtype=np.float64)
+
+
+def robotiq_position_from_q(hand_q: np.ndarray) -> int:
+    """Map the independent Robotiq URDF joint to the rPR command byte."""
+    q = np.asarray(hand_q, dtype=np.float64).reshape(-1)
+    if (q.shape != (1,) or not np.all(np.isfinite(q)) or
+            q[0] < -1e-8 or q[0] > ROBOTIQ_MAX_JOINT_RAD + 1e-8):
+        raise ValueError("Robotiq planner q must contain one joint in [0, 0.8]")
+    return int(np.clip(np.rint(
+        q[0] / ROBOTIQ_MAX_JOINT_RAD * ROBOTIQ_MAX_POSITION), 0, 255))

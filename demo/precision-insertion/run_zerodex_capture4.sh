@@ -59,6 +59,8 @@ if [[ -n ${PRECISION_CANDIDATE_POLICY_PROFILE:-} ]]; then
 fi
 if [[ ${PRECISION_END_EFFECTOR:-inspire} == franka_gripper ]]; then
   precision_default_catalog="$PRECISION_STAGE_ROOT/recipient_gap${PRECISION_GAP_MM}_endpoint_catalog_franka_gripper.json"
+elif [[ ${PRECISION_END_EFFECTOR:-inspire} == robotiq_2f85 ]]; then
+  precision_default_catalog="$PRECISION_STAGE_ROOT/recipient_gap${PRECISION_GAP_MM}_endpoint_catalog_robotiq_2f85.json"
 else
   precision_default_catalog="$PRECISION_STAGE_ROOT/recipient_gap${PRECISION_GAP_MM}_endpoint_catalog_straight.json"
 fi

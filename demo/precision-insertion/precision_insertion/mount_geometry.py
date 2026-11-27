@@ -55,4 +55,8 @@ def link8_to_hand(urdf_path: Path) -> np.ndarray:
     if "fr3_hand_joint" in joints:
         return _fixed_pose(joints, "fr3_hand_joint",
                            "fr3_link8", "fr3_hand")
-    raise ValueError("URDF has neither Inspire nor stock-gripper hand mount")
+    if "fr3_robotiq_mount_joint" in joints:
+        return _fixed_pose(joints, "fr3_robotiq_mount_joint",
+                           "fr3_link8", "robotiq_85_base_link")
+    raise ValueError(
+        "URDF has neither Inspire, stock-gripper, nor Robotiq hand mount")

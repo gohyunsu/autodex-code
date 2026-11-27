@@ -24,6 +24,8 @@ from .geometry import validate_se3
 KEY_AXIS_LOCAL = np.asarray([0.0, 0.0, 1.0], dtype=np.float64)
 KEY_CENTER_LOCAL_M = np.asarray([0.0, 0.0, 0.040], dtype=np.float64)
 KEY_DIAMETER_M = 0.030
+ROBOTIQ_PALM_TO_KEY_CENTER_M = 0.125
+ROBOTIQ_KEY_GRASP_Q_RAD = 0.53
 UPRIGHT_GRASP_ABOVE_CENTER_M = 0.015
 UPRIGHT_APPROACH_VARIANTS = 8
 SIDE_DOWN_WRIST_VARIANTS = 2
@@ -141,10 +143,11 @@ def analytic_franka_gripper_grasp(
     *,
     table_normal_robot: np.ndarray,
     robot_base_position_robot: np.ndarray = np.zeros(3),
-    palm_to_key_center_m: float = 0.1034,
+    palm_to_key_center_m: float | None = None,
     pregrasp_clearance_m: float = 0.080,
     approach_azimuth_rad: float = 0.0,
     axis_sign: int = 1,
+    end_effector: str = "franka_gripper",
 ) -> AnalyticGripperGrasp:
     """Construct one grasp for a lying or standing cylindrical key.
 
@@ -159,6 +162,12 @@ def analytic_franka_gripper_grasp(
     base = np.asarray(robot_base_position_robot, dtype=np.float64).reshape(-1)
     if base.shape != (3,) or not np.all(np.isfinite(base)):
         raise ValueError("robot base position must be a finite three-vector")
+    if end_effector not in {"franka_gripper", "robotiq_2f85"}:
+        raise ValueError("analytic parallel grasp needs a supported gripper")
+    if palm_to_key_center_m is None:
+        palm_to_key_center_m = (
+            ROBOTIQ_PALM_TO_KEY_CENTER_M
+            if end_effector == "robotiq_2f85" else 0.1034)
     for value, name in ((palm_to_key_center_m, "palm-to-key-center"),
                         (pregrasp_clearance_m, "pregrasp clearance")):
         if not np.isfinite(value) or value <= 0.0:
@@ -213,7 +222,14 @@ def analytic_franka_gripper_grasp(
     hand_y = _unit(np.cross(hand_z, hand_x), name="jaw-closing axis")
     # Re-orthogonalize after using the measured upright axis.
     hand_x = _unit(np.cross(hand_y, hand_z), name="gripper longitudinal axis")
-    rotation = np.column_stack((hand_x, hand_y, hand_z))
+    key_axis = hand_x.copy()
+    # Stock Franka Hand closes along local y. Robotiq 2F-85 closes along
+    # local x, with its straight tool extension along local z. Reorder the
+    # exact same physical key/jaw/approach frame instead of reusing the wrong
+    # stock-hand convention.
+    rotation = (np.column_stack((hand_y, -hand_x, hand_z))
+                if end_effector == "robotiq_2f85" else
+                np.column_stack((hand_x, hand_y, hand_z)))
     if np.linalg.det(rotation) < 0.0:
         raise ValueError("analytic gripper frame is left-handed")
 
@@ -229,10 +245,14 @@ def analytic_franka_gripper_grasp(
         T_robot_hand=hand,
         T_robot_pregrasp=pregrasp,
         T_key_hand=key_hand,
-        key_axis_robot=hand_x,
+        key_axis_robot=key_axis,
         table_normal_robot=normal,
-        pregrasp_q=np.asarray([0.04, 0.04], dtype=np.float64),
-        grasp_q=np.asarray([KEY_DIAMETER_M / 2.0] * 2, dtype=np.float64),
+        pregrasp_q=(np.asarray([0.0], dtype=np.float64)
+                    if end_effector == "robotiq_2f85" else
+                    np.asarray([0.04, 0.04], dtype=np.float64)),
+        grasp_q=(np.asarray([ROBOTIQ_KEY_GRASP_Q_RAD], dtype=np.float64)
+                 if end_effector == "robotiq_2f85" else
+                 np.asarray([KEY_DIAMETER_M / 2.0] * 2, dtype=np.float64)),
     )
 
 
@@ -242,6 +262,7 @@ def analytic_franka_gripper_grasp_for_candidate(
     table_normal_robot: np.ndarray,
     identifier: tuple[str, str, str],
     robot_base_position_robot: np.ndarray = np.zeros(3),
+    end_effector: str = "franka_gripper",
 ) -> AnalyticGripperGrasp:
     """Reconstruct one catalogued symmetry-equivalent analytic grasp.
 
@@ -269,10 +290,12 @@ def analytic_franka_gripper_grasp_for_candidate(
             T_robot_key, table_normal_robot=table_normal_robot,
             robot_base_position_robot=robot_base_position_robot,
             approach_azimuth_rad=(2.0 * np.pi * variant /
-                                  UPRIGHT_APPROACH_VARIANTS))
+                                  UPRIGHT_APPROACH_VARIANTS),
+            end_effector=end_effector)
     if not 0 <= variant < SIDE_DOWN_WRIST_VARIANTS:
         raise ValueError("side-down gripper variant is outside the catalog")
     return analytic_franka_gripper_grasp(
         T_robot_key, table_normal_robot=table_normal_robot,
         robot_base_position_robot=robot_base_position_robot,
-        axis_sign=(1 if variant == 0 else -1))
+        axis_sign=(1 if variant == 0 else -1),
+        end_effector=end_effector)

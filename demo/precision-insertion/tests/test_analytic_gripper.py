@@ -113,3 +113,20 @@ def test_candidate_identifier_must_match_measured_tabletop_class():
         analytic_franka_gripper_grasp_for_candidate(
             _pose(np.eye(3)), table_normal_robot=[0.0, 0.0, 1.0],
             identifier=("table", "1", "000"))
+
+
+def test_robotiq_grasp_uses_physical_closing_axis_and_one_joint():
+    rotation = np.asarray([[0.0, 0.0, 1.0],
+                           [1.0, 0.0, 0.0],
+                           [0.0, 1.0, 0.0]])
+    result = analytic_franka_gripper_grasp(
+        _pose(rotation), table_normal_robot=[0.0, 0.0, 1.0],
+        end_effector="robotiq_2f85")
+    # Robotiq closes along local x; cylinder axis is local -y; approach is z.
+    np.testing.assert_allclose(
+        np.cross(result.T_robot_hand[:3, 0], result.T_robot_hand[:3, 1]),
+        result.T_robot_hand[:3, 2], atol=1e-9)
+    np.testing.assert_allclose(
+        np.abs(result.T_robot_hand[:3, 1]), [1.0, 0.0, 0.0], atol=1e-9)
+    np.testing.assert_allclose(result.pregrasp_q, [0.0])
+    np.testing.assert_allclose(result.grasp_q, [0.53])

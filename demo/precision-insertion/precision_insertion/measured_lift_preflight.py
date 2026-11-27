@@ -201,7 +201,7 @@ def plan_measured_lift_chain(
     if selection["status"] != "candidates_available" or len(matches) != 1:
         raise ValueError("selected v8 candidate is stale or no longer eligible")
     candidate_dir = Path(matches[0]["candidate_dir"]).expanduser().resolve()
-    if spec.name == "franka_gripper":
+    if spec.is_parallel_gripper:
         pickup_key = validate_se3(cart2se3(np.asarray(
             trial.trial_scene["mesh"]["target"]["pose"], dtype=np.float64)),
             name="initial analytic pickup T_robot_key")

@@ -382,7 +382,7 @@ def plan_fresh_key_trial(
         name="fresh trial T_robot_key")
     support_normal_robot = None
     with timed("planning.pose_classification", phase="planning"):
-        if spec.name == "franka_gripper":
+        if spec.is_parallel_gripper:
             if mode.family != "cylinder":
                 raise ValueError(
                     "the deterministic Franka-gripper runtime currently "
@@ -466,12 +466,12 @@ def plan_fresh_key_trial(
             with timed("planning.candidate_load", phase="planning", kind="io",
                        candidate_id=candidate_id):
                 analytic_grasp = None
-                if spec.name == "franka_gripper":
+                if spec.is_parallel_gripper:
                     assert support_normal_robot is not None
                     analytic_grasp = analytic_franka_gripper_grasp_for_candidate(
                         pose_robot,
                         table_normal_robot=support_normal_robot,
-                        identifier=key)
+                        identifier=key, end_effector=spec.name)
                     override = analytic_grasp.candidate_override(identifier=key)
                 else:
                     override = planner_candidate_override(

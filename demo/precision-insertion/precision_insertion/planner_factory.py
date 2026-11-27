@@ -28,6 +28,8 @@ def selected_fr3_planner_config_options(
         "inspire": ("fr3_inspire.yml", "inspire_floating.yml"),
         "franka_gripper": (
             "fr3_gripper.yml", "franka_gripper_floating.yml"),
+        "robotiq_2f85": (
+            "fr3_robotiq_2f85.yml", "robotiq_2f85_floating.yml"),
     }
     robot_name, hand_name = names[selected.name]
     config_root = _CUROBO_CONTENT / "configs" / "robot"

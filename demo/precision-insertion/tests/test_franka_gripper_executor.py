@@ -32,6 +32,8 @@ class Arm:
 
 def _executor(*, gripper: bool):
     executor = object.__new__(FrankaExecutor)
+    executor._is_stock_gripper = gripper
+    executor._is_robotiq = False
     executor._is_parallel_gripper = gripper
     executor.arm = Arm()
     executor.hand = None

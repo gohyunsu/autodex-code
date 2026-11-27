@@ -92,7 +92,8 @@ class _ObservedArm:
               self.limits.max_state_gap_s):
             raise RuntimeError(
                 f"FR3 {self.stage} state stream stopped advancing")
-        hand_state = state if self.spec.name == "franka_gripper" else self.hand.get_data()
+        hand_state = (state if self.spec.name == "franka_gripper"
+                      else self.hand.get_data())
         if not isinstance(hand_state, dict):
             raise RuntimeError(
                 f"{self.spec.name} {self.stage} state stream is absent")
@@ -116,6 +117,11 @@ class _ObservedArm:
             commanded = measured.copy()
             hand_time = time.time()
             upper = 0.04
+        elif self.spec.name == "robotiq_2f85":
+            commanded = _vector(hand_state.get("action"), 1,
+                                "commanded Robotiq joint")
+            hand_time = float(hand_state.get("time", float("nan")))
+            upper = 0.8
         else:
             commanded = _vector(hand_state.get("action"), 6,
                                 "commanded Inspire joints")
@@ -291,7 +297,9 @@ class FrankaMeasuredLiftAdapter:
                 not np.allclose(path[:, 7:], path[0, 7:],
                                 atol=1e-8, rtol=0) or
                 np.any(hand < 0) or
-                np.any(hand > (0.04 if spec.name == "franka_gripper" else 1000)) or
+                np.any(hand > (0.04 if spec.name == "franka_gripper" else
+                               0.8 if spec.name == "robotiq_2f85" else
+                               1000)) or
                 type(max_duration_s) not in (int, float) or
                 not math.isfinite(max_duration_s) or max_duration_s <= 0 or
                 not isinstance(trajectory_sha256, str) or

@@ -22,6 +22,7 @@ from precision_insertion.analytic_gripper import (
 )
 from precision_insertion.config import select_mode
 from precision_insertion.geometry import validate_se3
+from precision_insertion.end_effector import end_effector_spec
 from autodex.utils.conversion import se32cart
 
 
@@ -54,6 +55,9 @@ def _save_npy_exact(path: Path, value: np.ndarray) -> None:
 def build(shared_root: Path) -> dict:
     root = Path(shared_root).expanduser().resolve()
     mode = select_mode("cylinder", 5)
+    spec = end_effector_spec()
+    if not spec.is_parallel_gripper:
+        raise ValueError("analytic candidate preparation needs a parallel gripper")
     object_dir = root / "object_processing" / mode.key_object / "processed_data"
     tabletop_dir = object_dir / "info" / "tabletop"
     planning_mesh = object_dir / "mesh" / "simplified.obj"
@@ -62,9 +66,9 @@ def build(shared_root: Path) -> dict:
                  tabletop_dir / "001.npy"):
         if not path.is_file():
             raise FileNotFoundError(path)
-    candidate_root = (root / "AutoDex" / "candidates" / "franka_gripper" /
+    candidate_root = (root / "AutoDex" / "candidates" / spec.asset_namespace /
                       "v8" / mode.key_object / "table")
-    scene_root = (root / "AutoDex" / "scene" / "franka_gripper" /
+    scene_root = (root / "AutoDex" / "scene" / spec.asset_namespace /
                   mode.key_object / "table")
     rows = []
     for scene_id, stem in enumerate(("000", "001")):
@@ -91,7 +95,7 @@ def build(shared_root: Path) -> dict:
                 "param": {"placement": (
                     "end_down" if scene_id == 0 else "side_down")},
                 "symmetry_reduced": True,
-                "end_effector": "franka_gripper",
+                "end_effector": spec.name,
             },
         }
         scene_path = scene_root / f"{scene_id}.json"
@@ -100,7 +104,7 @@ def build(shared_root: Path) -> dict:
             identifier = ("table", str(scene_id), f"{variant:03d}")
             grasp = analytic_franka_gripper_grasp_for_candidate(
                 key_pose, table_normal_robot=np.asarray([0.0, 0.0, 1.0]),
-                identifier=identifier)
+                identifier=identifier, end_effector=spec.name)
             candidate = candidate_root / str(scene_id) / f"{variant:03d}"
             _save_npy_exact(candidate / "wrist_se3.npy",
                             grasp.T_key_hand.astype(np.float64))
@@ -109,9 +113,14 @@ def build(shared_root: Path) -> dict:
             _save_npy_exact(candidate / "grasp_pose.npy",
                             grasp.grasp_q.astype(np.float64))
             contract = {
-                "schema": "precision_insertion_franka_gripper_analytic_grasp_v1",
+                "schema": ("precision_insertion_franka_gripper_analytic_grasp_v1"
+                           if spec.name == "franka_gripper" else
+                           "precision_insertion_parallel_gripper_analytic_grasp_v2"),
                 "key_object": mode.key_object,
-                "gripper": "franka_stock_parallel_gripper",
+                "gripper": ("franka_stock_parallel_gripper"
+                            if spec.name == "franka_gripper" else
+                            "robotiq_2f85"),
+                "end_effector": spec.name,
                 "tabletop_pose_stem": stem,
                 "tabletop_class": grasp.tabletop_class,
                 "variant_index": variant,
@@ -128,9 +137,11 @@ def build(shared_root: Path) -> dict:
                 "physical_validation": False,
                 "robot_ready": False,
             }
+            if spec.name == "franka_gripper":
+                contract.pop("end_effector")
             # Candidate 000 predates the explicit variant metadata. Keep its
             # byte-identical contract so asset generation remains additive.
-            if variant == 0:
+            if variant == 0 and spec.name == "franka_gripper":
                 contract.pop("variant_index")
                 contract.pop("variant_count")
                 contract["runtime_contract"] = (
@@ -143,8 +154,10 @@ def build(shared_root: Path) -> dict:
                          "candidate_dir": str(candidate),
                          "scene": str(scene_path)})
     return {
-        "schema": "precision_insertion_franka_gripper_seed_assets_v1",
-        "shared_root": str(root), "end_effector": "franka_gripper",
+        "schema": ("precision_insertion_franka_gripper_seed_assets_v1"
+                   if spec.name == "franka_gripper" else
+                   "precision_insertion_parallel_gripper_seed_assets_v2"),
+        "shared_root": str(root), "end_effector": spec.name,
         "key_object": mode.key_object, "rows": rows,
     }
 

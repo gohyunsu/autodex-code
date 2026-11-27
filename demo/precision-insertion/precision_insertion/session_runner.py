@@ -876,7 +876,7 @@ class SessionRunner:
             raise ValueError("frozen session or endpoint catalogue changed")
         limits.validate()
         spec = end_effector_spec()
-        if spec.name == "franka_gripper":
+        if spec.is_parallel_gripper:
             if (retreat_goal_arm_q is None or
                     minimum_release_key_clearance_m is None):
                 raise ValueError(

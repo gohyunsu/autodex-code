@@ -206,7 +206,8 @@ def execute_bound_pickup(
             scene_cfg=trial.trial_scene,
             skip_lift=True, start_from_current=True)
         raw = np.asarray(squeeze_action, dtype=np.float64)
-        upper = 0.04 if spec.name == "franka_gripper" else 1000.0
+        upper = (0.04 if spec.name == "franka_gripper" else
+                 0.8 if spec.name == "robotiq_2f85" else 1000.0)
         if (raw.shape != (spec.hand_dof,) or not np.all(np.isfinite(raw)) or
                 np.any(raw < 0) or np.any(raw > upper)):
             raise RuntimeError("stock executor returned no valid squeeze action")

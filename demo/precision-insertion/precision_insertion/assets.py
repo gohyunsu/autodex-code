@@ -18,6 +18,10 @@ _CURRENT_FR3_GRIPPER_URDF = (
     Path(__file__).resolve().parents[3] / "autodex" / "planner" / "src" /
     "curobo" / "content" / "assets" / "robot" /
     "fr3_gripper_description" / "fr3_gripper.urdf")
+_CURRENT_FR3_ROBOTIQ_URDF = (
+    Path(__file__).resolve().parents[3] / "autodex" / "planner" / "src" /
+    "curobo" / "content" / "assets" / "robot" /
+    "fr3_robotiq_2f85_description" / "fr3_robotiq_2f85.urdf")
 
 
 def selected_fr3_inspire_urdf() -> Path:
@@ -31,6 +35,10 @@ def selected_robot_urdf() -> Path:
     spec = end_effector_spec()
     if spec.name == "inspire":
         return selected_fr3_inspire_urdf()
+    if spec.name == "robotiq_2f85":
+        override = os.environ.get("PRECISION_FR3_ROBOTIQ_URDF")
+        return (Path(override).expanduser().resolve()
+                if override else _CURRENT_FR3_ROBOTIQ_URDF)
     override = os.environ.get("PRECISION_FR3_GRIPPER_URDF")
     return (Path(override).expanduser().resolve()
             if override else _CURRENT_FR3_GRIPPER_URDF)
@@ -84,7 +92,8 @@ class AssetPaths:
     def robot_urdf(self) -> Path:
         if self.mode.family == "cylinder" or os.environ.get(
                 "PRECISION_FR3_INSPIRE_URDF") or os.environ.get(
-                    "PRECISION_FR3_GRIPPER_URDF"):
+                "PRECISION_FR3_GRIPPER_URDF") or os.environ.get(
+                "PRECISION_FR3_ROBOTIQ_URDF"):
             return selected_robot_urdf()
         return (self.shared_root / "AutoDex" / "content" / "assets" /
                 "robot" / "fr3_inspire_description" / "fr3_inspire.urdf")

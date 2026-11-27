@@ -6,7 +6,7 @@ precision_profile_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 precision_profile_root=$(cd -- "$precision_profile_dir/../../.." && pwd)
 
 export PRECISION_REPO_ROOT=${PRECISION_REPO_ROOT:-$precision_profile_root}
-export PRECISION_END_EFFECTOR=${PRECISION_END_EFFECTOR:-franka_gripper}
+export PRECISION_END_EFFECTOR=${PRECISION_END_EFFECTOR:-robotiq_2f85}
 export PRECISION_STAGE_POLICY=${PRECISION_STAGE_POLICY:-$precision_profile_root/demo/precision-insertion/config/zerodex_capture4_stage_policy.json}
 export PRECISION_LOCAL_PROJECT_ROOT=${PRECISION_LOCAL_PROJECT_ROOT:-$HOME/precision_insertion_project}
 # This rig's NAS namespace is fixed rather than caller-overridable. Local
@@ -88,6 +88,7 @@ if [[ -d $precision_local_qwen ]]; then
 fi
 export PRECISION_FR3_INSPIRE_URDF=${PRECISION_FR3_INSPIRE_URDF:-$precision_profile_root/autodex/planner/src/curobo/content/assets/robot/fr3_inspire_description/fr3_inspire.urdf}
 export PRECISION_FR3_GRIPPER_URDF=${PRECISION_FR3_GRIPPER_URDF:-$precision_profile_root/autodex/planner/src/curobo/content/assets/robot/fr3_gripper_description/fr3_gripper.urdf}
+export PRECISION_FR3_ROBOTIQ_URDF=${PRECISION_FR3_ROBOTIQ_URDF:-$precision_profile_root/autodex/planner/src/curobo/content/assets/robot/fr3_robotiq_2f85_description/fr3_robotiq_2f85.urdf}
 # Resolve the planner's cuRobo copy before the BODex copy on this profile.
 export PRECISION_CUROBO_PYTHONPATH=${PRECISION_CUROBO_PYTHONPATH:-$precision_profile_root/autodex/planner/src}
 
@@ -100,6 +101,13 @@ export PRECISION_CAPTURE4_ASSET_ROOT=${PRECISION_CAPTURE4_ASSET_ROOT:-$PRECISION
 export PRECISION_CAPTURE4_PROJECT_ROOT=${PRECISION_CAPTURE4_PROJECT_ROOT:-$PRECISION_CAPTURE4_HOME/shared_data/hyunsu/precision_insertion}
 export PRECISION_ZERODEX_FR3_FCI_IP=${PRECISION_ZERODEX_FR3_FCI_IP:-172.16.1.11}
 export PRECISION_ZERODEX_DAEMON_HOST=${PRECISION_ZERODEX_DAEMON_HOST:-127.0.0.1}
+export PRECISION_ROBOTIQ_HOST=${PRECISION_ROBOTIQ_HOST:-147.46.219.136}
+export PRECISION_ROBOTIQ_COMMAND_PORT=${PRECISION_ROBOTIQ_COMMAND_PORT:-5565}
+export PRECISION_ROBOTIQ_STATE_PORT=${PRECISION_ROBOTIQ_STATE_PORT:-5566}
+# Match the commissioned ZeroDex teleoperation profile. These are Robotiq
+# register values (0..255), not extra task-success thresholds.
+export PRECISION_ROBOTIQ_SPEED=${PRECISION_ROBOTIQ_SPEED:-255}
+export PRECISION_ROBOTIQ_FORCE=${PRECISION_ROBOTIQ_FORCE:-255}
 export PRECISION_CAPTURE4_CAMERA_IDS=${PRECISION_CAPTURE4_CAMERA_IDS:-26053248,25322639,25305462,25322642}
 # Feed all commissioned cameras into ChArUco triangulation. That estimator
 # already refits each corner after reprojection outlier removal; the later
