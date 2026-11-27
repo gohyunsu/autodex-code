@@ -104,6 +104,25 @@ def test_selected_v8_pickup_then_measured_squeeze_lift_preflight(
     assert runner.current_decision().action == "await_lift_observation"
 
 
+def test_recording_is_ready_after_planning_and_before_first_pickup_state(
+        tmp_path, monkeypatch):
+    bound, runner, *_ = _handler(tmp_path)
+    order = []
+    original_read = bound.read_state
+    bound.on_execution_start = lambda attempt_id, candidate_id: order.append(
+        ("record", attempt_id, candidate_id))
+    bound.read_state = lambda: (order.append(("state",)) or original_read())
+
+    def pickup(**kwargs):
+        order.append(("pickup",))
+        kwargs["read_post_state"]()
+
+    monkeypatch.setattr(live_pickup_handlers, "execute_bound_pickup", pickup)
+    bound.begin_and_squeeze(runner, runner.current_decision())
+    assert order[:3] == [
+        ("record", "attempt_001", "table/0/3"), ("state",), ("pickup",)]
+
+
 def test_disabled_motion_does_not_open_an_attempt(tmp_path, monkeypatch):
     bound, runner, *_ = _handler(tmp_path, enabled=False)
     monkeypatch.setattr(live_pickup_handlers, "execute_bound_pickup",

@@ -30,7 +30,7 @@ def test_recording_receipt_rejects_path_components(tmp_path):
         _module().recording_receipt_directory(tmp_path, "../other")
 
 
-def test_recording_starts_only_after_preinsert_marker(
+def test_all_view_recording_spans_first_motion_to_final_capture(
         tmp_path, monkeypatch):
     module = _module()
     receipt_root = tmp_path / "receipts"
@@ -40,6 +40,8 @@ def test_recording_starts_only_after_preinsert_marker(
     monkeypatch.setenv("PRECISION_RECORDING_TRIGGER_ROOT", str(trigger_root))
     monkeypatch.setenv("PRECISION_RUN_TAG", "20261030_123456_test")
     monkeypatch.setenv("PRECISION_CODE_COMMIT", "a" * 40)
+    monkeypatch.setenv(
+        "PRECISION_CAPTURE4_CAMERA_IDS", "100,101,102,103")
     events = []
 
     class Pipeline:
@@ -51,26 +53,26 @@ def test_recording_starts_only_after_preinsert_marker(
         def poll(self):
             self.polls += 1
             if self.polls == 1:
-                marker = Path(self.env["PRECISION_PREINSERT_CONFIRMED_MARKER"])
+                marker = Path(self.env["PRECISION_EXECUTION_READY_MARKER"])
                 marker.parent.mkdir(parents=True, exist_ok=True)
                 marker.write_text(json.dumps({
-                    "schema": "precision_insertion_preinsert_confirmed_v1",
+                    "schema": "precision_insertion_execution_ready_v1",
                     "attempt_id": "attempt_1",
                     "candidate_id": "table/0/20195",
                     "confirmed_at_unix_ns": 10,
                 }), encoding="utf-8")
-                events.append("preinsert_confirmed")
+                events.append("execution_ready")
                 return None
             if self.polls == 2:
                 marker = Path(self.env[
-                    "PRECISION_RELEASE_CLEAR_COMPLETED_MARKER"])
+                    "PRECISION_FINAL_CAPTURE_COMPLETED_MARKER"])
                 marker.write_text(json.dumps({
-                    "schema": "precision_insertion_release_clear_completed_v1",
+                    "schema": "precision_insertion_final_capture_completed_v1",
                     "attempt_id": "attempt_1",
                     "candidate_id": "table/0/20195",
                     "confirmed_at_unix_ns": 20,
                 }), encoding="utf-8")
-                events.append("release_clear_completed")
+                events.append("final_capture_completed")
                 return None
             return 0
 
@@ -80,19 +82,23 @@ def test_recording_starts_only_after_preinsert_marker(
     monkeypatch.setattr(
         module, "_stop_recorder",
         lambda **_kwargs: (events.append("recorder_stopped") or {
-            "video": "26053248.avi", "frame_count": 1}))
+            "schema": "precision_insertion_multiview_recording_manifest_v1",
+            "camera_ids": ["100", "101", "102", "103"],
+            "views": {}, "missing_camera_ids": []}))
     monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
     assert module.run("--run") == 0
     assert events == [
-        "pipeline_started", "preinsert_confirmed", "recorder_started",
-        "release_clear_completed", "recorder_stopped"]
+        "pipeline_started", "execution_ready", "recorder_started",
+        "final_capture_completed", "recorder_stopped"]
     receipt = json.loads((receipt_root / "20261030_123456_test" /
                           "recording_ref.json").read_text())
     assert receipt["recording_policy"] == (
-        "after_preinsert_until_release_and_clear_completed")
+        "after_planning_before_first_motion_until_final_capture_before_vlm")
+    assert receipt["camera_ids"] == ["100", "101", "102", "103"]
     assert receipt["recording_trigger"]["candidate_id"] == "table/0/20195"
     assert receipt["recording_started_unix_ns"] is not None
     assert receipt["recording_stop_trigger"]["candidate_id"] == (
         "table/0/20195")
     assert receipt["recording_stopped_unix_ns"] is not None
-    assert receipt["recording_stop_reason"] == "release_and_clear_completed"
+    assert receipt["recording_stop_reason"] == (
+        "final_capture_completed_before_vlm_label")

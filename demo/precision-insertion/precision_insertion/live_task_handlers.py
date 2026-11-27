@@ -97,6 +97,7 @@ class LiveTaskHandlers:
     same_trial_observation_yaw_rad: float = 0.
     on_preinsert_confirmed: Callable[[str, str], None] | None = None
     on_release_and_clear_completed: Callable[[str, str], None] | None = None
+    on_final_capture_completed: Callable[[str, str], None] | None = None
     after_lift_capture_provider: (
         Callable[[], tuple[str, RawCameraCapture] | None] | None) = None
     decision_time: Callable[[], float] = time.time
@@ -1072,6 +1073,9 @@ class LiveTaskHandlers:
         final, final_capture = self._capture(
             runner=runner, decision=decision,
             callback=self.capture_final, phase="final_clear_view")
+        if self.on_final_capture_completed is not None:
+            self.on_final_capture_completed(
+                attempt.attempt_id, attempt.candidate_id)
         initial = runner.initial_key_evidence_dir
         if initial is None:
             raise ValueError("released insertion lacks its initial key perception")

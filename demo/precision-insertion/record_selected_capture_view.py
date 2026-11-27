@@ -21,7 +21,8 @@ from paradex.io.camera_system.camera_reader import CameraReader
 
 
 def record(camera_id: str, output_dir: Path, *, fps: int, max_seconds: float,
-           poll_seconds: float = 0.005) -> dict:
+           poll_seconds: float = 0.005,
+           ready_file: Path | None = None) -> dict:
     output_dir.mkdir(parents=True, exist_ok=False)
     video_path = output_dir / f"{camera_id}.avi"
     index_path = output_dir / f"{camera_id}.frames.jsonl"
@@ -80,11 +81,20 @@ def record(camera_id: str, output_dir: Path, *, fps: int, max_seconds: float,
                 index.write(json.dumps({"video_frame": count, "camera_id": camera_id,
                                         "source_frame_id": fid,
                                         "read_unix_ns": read_ns}) + "\n")
+                index.flush()
                 if first_id is None:
                     first_id = fid
                 last_id = fid
                 last_written_id = fid
                 count += 1
+                if ready_file is not None and not ready_file.exists():
+                    ready_file.parent.mkdir(parents=True, exist_ok=True)
+                    ready_file.write_text(json.dumps({
+                        "schema": "precision_insertion_camera_recording_ready_v1",
+                        "camera_id": camera_id,
+                        "first_source_frame_id": first_id,
+                        "ready_unix_ns": time.time_ns(),
+                    }, sort_keys=True) + "\n", encoding="utf-8")
                 next_write_ns = now_ns + frame_period_ns
     except Exception:
         status = "error"
@@ -116,14 +126,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--camera-id", required=True)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--ready-file", type=Path,
+                        help="write after the first source frame is in the video")
     parser.add_argument("--fps", type=int, default=30,
                         help="AVI playback rate; selected FLIR view is 30 Hz")
     parser.add_argument("--max-seconds", type=float, default=900.0)
     args = parser.parse_args()
     if args.fps < 1 or args.max_seconds <= 0:
         parser.error("fps and max-seconds must be positive")
-    print(json.dumps(record(args.camera_id, args.output_dir, fps=args.fps,
-                            max_seconds=args.max_seconds)), flush=True)
+    print(json.dumps(record(
+        args.camera_id, args.output_dir, fps=args.fps,
+        max_seconds=args.max_seconds, ready_file=args.ready_file)), flush=True)
 
 
 if __name__ == "__main__":

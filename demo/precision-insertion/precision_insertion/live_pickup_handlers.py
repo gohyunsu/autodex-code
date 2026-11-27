@@ -47,6 +47,7 @@ class LivePickupHandlers:
     measured_lift_parameters: Mapping[str, float]
     enable_robot_motion: bool = False
     before_pickup: Callable[[], None] | None = None
+    on_execution_start: Callable[[str, str], None] | None = None
     attempt_id_factory: Callable[[], str] = lambda: f"attempt_{uuid4().hex}"
     started_at_factory: Callable[[], float] = time.time
     decision_time: Callable[[], float] = time.time
@@ -59,6 +60,8 @@ class LivePickupHandlers:
                 not callable(self.decision_time) or
                 (self.before_pickup is not None and
                  not callable(self.before_pickup)) or
+                (self.on_execution_start is not None and
+                 not callable(self.on_execution_start)) or
                 not isinstance(self.pickup_limits, PickupExecutionLimits) or
                 not isinstance(self.measured_lift_parameters, Mapping)):
             raise TypeError("live pickup needs feedback, limits and an interlock")
@@ -84,6 +87,8 @@ class LivePickupHandlers:
             started_at_s=self.started_at_factory())
         if attempt.candidate_id != decision.candidate_id:
             raise ValueError("started attempt differs from selected v8 grasp")
+        if self.on_execution_start is not None:
+            self.on_execution_start(attempt.attempt_id, attempt.candidate_id)
         before = self.read_state()
         after: LiveRobotState | None = None
 

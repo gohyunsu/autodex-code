@@ -16,6 +16,7 @@ import json
 import math
 import os
 from pathlib import Path
+import sys
 import time
 
 from precision_insertion.config import CYLINDER_RADIAL_GAPS_MM
@@ -23,7 +24,9 @@ from precision_insertion.pickup_execution import PickupExecutionLimits
 from precision_insertion.stage_policy import load_zerodex_stage_policy
 
 
-def _recording_event_marker(*, environment: str, schema: str):
+def _recording_event_marker(
+    *, environment: str, schema: str, acknowledgement_environment: str | None = None,
+):
     """Return an optional local event callback for the ZeroDex recorder.
 
     The marker path is supplied only by the ZeroDex recording wrapper. It is
@@ -34,6 +37,11 @@ def _recording_event_marker(*, environment: str, schema: str):
     if not raw:
         return None
     target = Path(raw).expanduser().resolve()
+    acknowledgement = None
+    if acknowledgement_environment is not None:
+        ack_raw = os.environ.get(acknowledgement_environment, "").strip()
+        if ack_raw:
+            acknowledgement = Path(ack_raw).expanduser().resolve()
 
     def notify(attempt_id: str, candidate_id: str) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -50,20 +58,36 @@ def _recording_event_marker(*, environment: str, schema: str):
             temporary.replace(target)
         finally:
             temporary.unlink(missing_ok=True)
+        if acknowledgement is not None:
+            timeout_s = float(os.environ.get(
+                "PRECISION_RECORDING_READY_TIMEOUT_S", "20"))
+            deadline = time.monotonic() + timeout_s
+            while not acknowledgement.is_file() and time.monotonic() < deadline:
+                time.sleep(.02)
+            if not acknowledgement.is_file():
+                print("[recording] readiness acknowledgement timed out; "
+                      "continuing the physical attempt", file=sys.stderr,
+                      flush=True)
+            else:
+                record = json.loads(acknowledgement.read_text(encoding="utf-8"))
+                if record.get("ready") is not True:
+                    print("[recording] recorder was unavailable; continuing the "
+                          "physical attempt", file=sys.stderr, flush=True)
 
     return notify
 
 
-def _preinsert_recording_marker():
+def _execution_recording_marker():
     return _recording_event_marker(
-        environment="PRECISION_PREINSERT_CONFIRMED_MARKER",
-        schema="precision_insertion_preinsert_confirmed_v1")
+        environment="PRECISION_EXECUTION_READY_MARKER",
+        schema="precision_insertion_execution_ready_v1",
+        acknowledgement_environment="PRECISION_RECORDING_READY_ACK")
 
 
-def _release_clear_recording_marker():
+def _final_capture_recording_marker():
     return _recording_event_marker(
-        environment="PRECISION_RELEASE_CLEAR_COMPLETED_MARKER",
-        schema="precision_insertion_release_clear_completed_v1")
+        environment="PRECISION_FINAL_CAPTURE_COMPLETED_MARKER",
+        schema="precision_insertion_final_capture_completed_v1")
 
 
 def _tabletop_pose_error_deg(policy=None) -> float:
@@ -145,8 +169,8 @@ def configure(core, live, options) -> dict:
     capture = _key_capture(policy)
     key_prompt = policy.key_prompt
     tabletop_pose_error_deg = _tabletop_pose_error_deg(policy)
-    recording_marker = _preinsert_recording_marker()
-    recording_stop_marker = _release_clear_recording_marker()
+    recording_marker = _execution_recording_marker()
+    recording_stop_marker = _final_capture_recording_marker()
     stationary = dict(policy.stationary)
     # The ChArUco interior is a calibration footprint, not the physical
     # tabletop boundary; the versioned policy therefore keeps its edge
@@ -187,6 +211,8 @@ def configure(core, live, options) -> dict:
                     "axial_waypoint_step_m": policy.axial_waypoint_step_m,
                     **stationary,
                 },
+                **({"on_execution_start": recording_marker}
+                   if recording_marker is not None else {}),
             },
             "lift": {
                 "limits": motion,
@@ -233,9 +259,7 @@ def configure(core, live, options) -> dict:
                     options, "same_trial_observation_lateral_attempts", 1),
                 "same_trial_observation_yaw_rad": getattr(
                     options, "same_trial_observation_yaw_rad", 0.),
-                **({"on_preinsert_confirmed": recording_marker}
-                   if recording_marker is not None else {}),
-                **({"on_release_and_clear_completed": recording_stop_marker}
+                **({"on_final_capture_completed": recording_stop_marker}
                    if recording_stop_marker is not None else {}),
                 "transfer_commissioning_path": None,
                 "preinsert_parameters": {
