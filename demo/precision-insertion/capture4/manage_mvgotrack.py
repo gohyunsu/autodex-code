@@ -22,6 +22,15 @@ PYTHON = Path(os.environ.get(
 SOURCE = ROOT / "MV-GoTrack"
 STATE = ROOT / "state"
 CAMERAS = ("26053248", "25322639", "25305462", "25322642")
+ACTIVE_TRACKER = "tracker.active.json"
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _camera_subset_sha256(path: Path) -> str:
@@ -80,14 +89,58 @@ def _spawn(name: str, command: list[str]) -> int:
 def _stop(name: str) -> None:
     pid = _pid(name)
     if pid is None:
+        if name == "tracker":
+            (STATE / ACTIVE_TRACKER).unlink(missing_ok=True)
         return
     os.killpg(pid, signal.SIGTERM)
     for _ in range(50):
         if _pid(name) is None:
-            return
+            break
         time.sleep(.1)
-    os.killpg(pid, signal.SIGKILL)
+    else:
+        os.killpg(pid, signal.SIGKILL)
     (STATE / f"{name}.pid").unlink(missing_ok=True)
+    if name == "tracker":
+        (STATE / ACTIVE_TRACKER).unlink(missing_ok=True)
+
+
+def _active_tracker() -> dict | None:
+    path = STATE / ACTIVE_TRACKER
+    if not path.is_file():
+        return None
+    try:
+        row = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    required = {"object", "mesh", "mesh_sha256"}
+    return row if isinstance(row, dict) and required <= row.keys() else None
+
+
+def _write_active_tracker(args) -> None:
+    STATE.mkdir(parents=True, exist_ok=True)
+    record = {
+        "object": args.object,
+        "mesh": str(Path(args.mesh).resolve()),
+        "mesh_sha256": _file_sha256(args.mesh),
+        "session": str(Path(args.session).resolve()),
+        "started_at_s": time.time(),
+    }
+    path = STATE / ACTIVE_TRACKER
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(record, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8")
+    temporary.replace(path)
+
+
+def _reinit_mesh(args) -> Path | None:
+    """Return the active mesh when a new session carries identical geometry."""
+    active = _active_tracker()
+    if (active is None or active["object"] != args.object or
+            active["mesh_sha256"] != _file_sha256(args.mesh)):
+        return None
+    path = Path(active["mesh"])
+    return path if path.is_file() else None
 
 
 def _ensure_stream() -> None:
@@ -118,14 +171,21 @@ def _tracker_command(args) -> list[str]:
 def start_or_reinit(args) -> None:
     _ensure_stream()
     if _pid("tracker") is not None:
-        subprocess.run([
-            str(PYTHON), str(SOURCE / "deploy/live_tracker.py"),
-            "--reinit", str(args.init_pose),
-            "--control-file", str(STATE / "tracker.control.json"),
-            "--object", args.object, "--mesh", str(args.mesh),
-        ], check=True)
-        return
+        mesh = _reinit_mesh(args)
+        if mesh is not None:
+            subprocess.run([
+                str(PYTHON), str(SOURCE / "deploy/live_tracker.py"),
+                "--reinit", str(args.init_pose),
+                "--control-file", str(STATE / "tracker.control.json"),
+                "--object", args.object, "--mesh", str(mesh),
+            ], check=True)
+            return
+        # A different object/geometry (or a legacy tracker without provenance)
+        # cannot be reinitialized in place. Restart this experiment-owned
+        # process; shared capture4 camera services remain untouched.
+        _stop("tracker")
     _spawn("tracker", _tracker_command(args))
+    _write_active_tracker(args)
 
 
 def main() -> int:

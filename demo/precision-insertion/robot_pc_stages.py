@@ -116,28 +116,29 @@ def _key_capture(policy=None) -> dict:
 
 
 def _unknown_transfer_recovery(runner, _decision, *, clear_view):
-    """Continue the session after the operator resolves an unknown key state.
+    """Open, move to clear view, then let fresh perception locate the key.
 
-    A stopped transfer cannot establish whether the key is still held. Let
-    the operator remove it, then use the usual empty-hand clear-view motion
-    and fresh key observation rather than terminating the action loop.
+    The unified recovery requested for this rig does not require a human to
+    classify whether the key is still held. Opening at the stopped pose drops
+    it, and the existing streamed clear-view move exposes its actual landed
+    pose for the normal four-view capture. Upright and side-down landings use
+    the same subsequent tabletop classifier.
     """
-    answer = input(
-        "[recovery] Remove the key from the hand/socket, place it upright "
-        "on the board, and leave the socket fixed. Type yes when done: ")
-    if answer.strip().lower() not in {"yes", "y"}:
-        raise RuntimeError("operator has not completed the key return")
-    clear_view.prepare_initial()
-    path = Path(runner._attempt_dir) / "supervised_transfer_reset.json"
+    measured = clear_view.prepare_initial()
+    if not hasattr(measured, "to_record"):
+        raise TypeError("automatic recovery needs measured clear-view feedback")
+    completed = float(measured.sample_timestamp_s)
+    path = Path(runner._attempt_dir) / "automatic_open_clear_reset.json"
     with path.open("x", encoding="utf-8") as stream:
         json.dump({
-            "schema": "precision_insertion_supervised_reset_v1",
+            "schema": "precision_insertion_automatic_open_clear_v1",
             "attempt_id": runner.active_attempt.attempt_id,
-            "method": "supervised_manual_return",
-            "reviewed_by": "operator",
-            "completed_at_s": time.time(),
-            "socket_clear": True,
+            "candidate_id": runner.active_attempt.candidate_id,
+            "method": "open_at_stopped_pose_then_clear_view",
+            "completed_at_s": completed,
+            "clear_view_reached": True,
             "hand_open": True,
+            "measured_state": measured.to_record(),
         }, stream, indent=2)
         stream.write("\n")
     return path

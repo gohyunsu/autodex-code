@@ -187,3 +187,27 @@ the 20 mm insertion target.
   evidence;
 - normal transfer, insertion, final clear-view and VLM records remain in their
   existing paths.
+
+## 2026-11-27 trial reinitialization and automatic drop recovery
+
+Each trial copies the same key mesh into a session-owned evidence directory.
+The capture4 manager now hashes that mesh and keeps the active tracker mesh
+path in `state/tracker.active.json`. A subsequent trial with the same object
+and identical geometry reinitializes the running tracker with its new pose but
+passes the original active mesh path expected by MV-GoTrack. A genuinely
+different object or mesh restarts only the experiment-owned tracker process;
+the shared capture4 camera daemon is not modified or restarted.
+
+The read-only SHM-to-JPEG bridge treats an empty ParaDex double-buffer slot as
+a transient acquisition slot and waits for the next frame. It no longer lets
+one empty slot terminate a camera thread while the HTTP process remains alive.
+Remote manager failures include capture4 stderr in the local exception and are
+owned by session cleanup even when startup fails partway through.
+
+For an unknown key state after pickup/squeeze/lift preflight failure, the
+ZeroDex Robotiq route no longer pauses for a manual `yes`. It opens the gripper
+at the stopped pose, uses the commissioned streamed clear-view motion, records
+the measured open/clear state, then runs the ordinary four-view tabletop key
+capture. The same classifier accepts an upright or side-down landing. This
+changes recovery execution only; it does not add a pose-quality or task-failure
+threshold, and the separate AutoDex/Inspire route is unchanged.

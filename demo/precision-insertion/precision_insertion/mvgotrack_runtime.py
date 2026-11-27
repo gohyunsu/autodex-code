@@ -145,9 +145,15 @@ class MVGoTrackRuntime:
     def _ssh(self, *arguments: str, check: bool = True) -> subprocess.CompletedProcess:
         command = ["ssh", "-p", str(self.config.ssh_port),
                    self.config.ssh_host, *map(str, arguments)]
-        return subprocess.run(
-            command, check=check, text=True, capture_output=True,
+        result = subprocess.run(
+            command, check=False, text=True, capture_output=True,
             timeout=max(10., self.config.timeout_s + 5.))
+        if check and result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            raise RuntimeError(
+                f"capture4 MV-GoTrack command failed ({result.returncode}): "
+                f"{detail or 'no remote diagnostic'}")
+        return result
 
     def _scp(self, source: Path, destination: str) -> None:
         subprocess.run(
@@ -196,6 +202,9 @@ class MVGoTrackRuntime:
             self._scp(mesh, str(remote / mesh.name))
             self._scp(local / "initialization.json",
                       str(remote / "initialization.json"))
+        # Cleanup owns this remote session even when start-or-reinit reports an
+        # error after partially starting capture4 processes.
+        self._remote_session = remote
         before = self._subscriber.newest_seq()
         with timed("mvgotrack.start_or_reinit", phase="tracker", kind="gpu"):
             result = self._ssh(
@@ -214,7 +223,6 @@ class MVGoTrackRuntime:
             self.config.expected_calibration_session,
             getattr(first, "calibration_session", None))
         self._last_seq = first.seq
-        self._remote_session = remote
         self._initialized_capture_id = observation.capture_id
         (local / "first_pose.json").write_text(
             json.dumps(first.to_record(), indent=2, sort_keys=True) + "\n",

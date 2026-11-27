@@ -310,6 +310,21 @@ def test_runtime_refuses_non_cylinder_initializer(tmp_path):
         runtime.initialize(prepared)
 
 
+def test_runtime_ssh_reports_capture4_stderr(monkeypatch):
+    runtime = mvgotrack_runtime.MVGoTrackRuntime(
+        mvgotrack_runtime.MVGoTrackRuntimeConfig(
+            endpoint="tcp://127.0.0.1:5591", ssh_host="capture4",
+            ssh_port=77, remote_manager=Path("/manager"),
+            remote_session_root=Path("/sessions"), timeout_s=4.),
+        runner=object())
+    monkeypatch.setattr(
+        mvgotrack_runtime.subprocess, "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1, stdout="", stderr="remote reason\n"))
+    with pytest.raises(RuntimeError, match="remote reason"):
+        runtime._ssh("/manager", "start-or-reinit")
+
+
 def test_runtime_overlaps_tracker_initialization_with_candidate_planning(
         tmp_path, monkeypatch):
     runtime = mvgotrack_runtime.MVGoTrackRuntime(

@@ -19,18 +19,25 @@ def test_unknown_transfer_can_return_to_fresh_key_capture(tmp_path, monkeypatch)
     from robot_pc_stages import _unknown_transfer_recovery
 
     calls = []
+    measured = SimpleNamespace(
+        sample_timestamp_s=2.0,
+        to_record=lambda: {
+            "schema": "precision_insertion_live_robot_state_v1",
+            "sample_timestamp_s": 2.0})
     clear_view = SimpleNamespace(
-        prepare_initial=lambda: calls.append("empty_hand_clear_view"))
+        prepare_initial=lambda: (calls.append("empty_hand_clear_view") or measured))
     runner = SimpleNamespace(
         _attempt_dir=tmp_path,
-        active_attempt=SimpleNamespace(attempt_id="trial"))
-    monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
+        active_attempt=SimpleNamespace(
+            attempt_id="trial", candidate_id="table/0/7"))
     path = _unknown_transfer_recovery(
         runner, None, clear_view=clear_view)
     record = json.loads(path.read_text())
     assert calls == ["empty_hand_clear_view"]
-    assert record["schema"] == "precision_insertion_supervised_reset_v1"
+    assert record["schema"] == "precision_insertion_automatic_open_clear_v1"
     assert record["attempt_id"] == "trial"
+    assert record["candidate_id"] == "table/0/7"
+    assert record["completed_at_s"] == 2.0
     assert record["hand_open"] is True
 
 

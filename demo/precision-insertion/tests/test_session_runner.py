@@ -1468,6 +1468,58 @@ def test_supervised_reset_rejects_wrong_class_or_displaced_key(
     assert runner.current_decision().action == "stop_for_review"
 
 
+def test_unknown_grasp_state_automatic_open_clear_restarts_from_fresh_pose(
+        monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        session_runner, "plan_admitted_key_trial",
+        lambda **kwargs: _report(runner, kwargs["key_observation"]))
+    _plan(runner, _observation("key_1", 10.0))
+    runner.begin_selected_attempt(attempt_id="attempt_1", started_at_s=10.2)
+    runner.observe_stage(
+        "grasp_success", None, timestamp_s=10.3,
+        evidence_refs={"aborted_attempt": "measured_lift/report.json"})
+    runner.record_failure(
+        "post_squeeze_preflight_failed", timestamp_s=10.31,
+        evidence_refs={"aborted_attempt": "measured_lift/report.json"})
+    assert runner.current_decision().action == "recover_key_then_reobserve"
+
+    monkeypatch.setattr(
+        session_runner, "classify_key_tabletop_pose",
+        lambda **_kwargs: {"stem": "000", "rotation_error_deg": 0.0})
+    monkeypatch.setattr(
+        session_runner, "validate_repose_rest_target",
+        lambda **_kwargs: {"key_socket_clearance_m": 0.1})
+    monkeypatch.setattr(
+        session_runner, "_load_mesh",
+        lambda _path: SimpleNamespace(bounds=np.array([
+            [-0.01, -0.01, 0.0], [0.01, 0.01, 0.08]])))
+    recovery = tmp_path / "automatic_open_clear.json"
+    recovery.write_text(json.dumps({
+        "schema": "precision_insertion_automatic_open_clear_v1",
+        "attempt_id": "attempt_1", "candidate_id": "table/0/3",
+        "method": "open_at_stopped_pose_then_clear_view",
+        "completed_at_s": 10.7, "hand_open": True,
+        "clear_view_reached": True,
+        "measured_state": {
+            "schema": "precision_insertion_live_robot_state_v1",
+            "sample_timestamp_s": 10.7},
+    }), encoding="utf-8")
+    landed = _observation("reset_key", 11.0)
+    evidence_dir = _save_evidence(runner, landed)
+    result = runner.observe_reset_landing(
+        key_observation=landed, key_evidence_dir=evidence_dir,
+        recovery_log_path=recovery, timestamp_s=11.05,
+        max_pose_error_deg=5.0, max_return_center_shift_m=0.01,
+        support_tolerance_m=0.002,
+        minimum_rest_socket_clearance_m=0.005,
+        minimum_board_edge_clearance_m=0.005)
+    assert result.labels["reset_success"] is True
+    saved = json.loads((runner._attempt_dir / "reset_landing.json").read_text())
+    assert saved["recovery_mode"] == "automatic_open_clear_then_reobserve"
+    assert runner.current_decision().action == "reobserve_key_and_preflight"
+
+
 def test_missed_grasp_retries_from_fresh_supported_pose_without_restoration(
         monkeypatch, tmp_path):
     runner = _runner(monkeypatch, tmp_path)

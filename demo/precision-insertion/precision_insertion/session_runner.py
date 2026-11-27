@@ -2353,6 +2353,26 @@ class SessionRunner:
                     not math.isfinite(completed)):
                 raise ValueError("missed-grasp recovery lacks measured clear view")
             recovery_mode = "autodex_missed_grasp_clear_view"
+        elif recovery.get("schema") == "precision_insertion_automatic_open_clear_v1":
+            try:
+                completed = float(recovery.get("completed_at_s", float("nan")))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("invalid automatic recovery completion time") from exc
+            measured = recovery.get("measured_state")
+            if (self.current_decision().action != "recover_key_then_reobserve" or
+                    recovery.get("attempt_id") != self._attempt.attempt_id or
+                    recovery.get("candidate_id") != self._attempt.candidate_id or
+                    recovery.get("method") !=
+                    "open_at_stopped_pose_then_clear_view" or
+                    recovery.get("clear_view_reached") is not True or
+                    recovery.get("hand_open") is not True or
+                    not isinstance(measured, dict) or
+                    measured.get("schema") !=
+                    "precision_insertion_live_robot_state_v1" or
+                    measured.get("sample_timestamp_s") != completed or
+                    not math.isfinite(completed)):
+                raise ValueError("automatic recovery lacks measured clear view")
+            recovery_mode = "automatic_open_clear_then_reobserve"
         else:
             try:
                 completed = float(recovery.get("completed_at_s", float("nan")))

@@ -23,6 +23,14 @@ from paradex.io.camera_system.camera_reader import MultiCameraReader
 HEADER = struct.Struct("!QQI")
 
 
+def encode_frame(frame, parameters) -> bytes | None:
+    """Encode one non-empty SHM slot; empty slots are transient."""
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return None
+    ok, encoded = cv2.imencode(".jpg", frame, parameters)
+    return encoded.tobytes() if ok else None
+
+
 class LatestFrames:
     def __init__(self, cameras: list[str], quality: int):
         self.cameras = cameras
@@ -48,10 +56,13 @@ class LatestFrames:
                 frame, frame_id = reader.wait_for_new_frame(timeout=1.)
             except TimeoutError:
                 continue
-            ok, encoded = cv2.imencode(".jpg", frame, parameters)
-            if not ok:
+            # ParaDex can expose an empty slot while its producer switches the
+            # double buffer. It is not an end-of-stream marker. Skip that slot
+            # and keep this read-only consumer attached for the next frame.
+            encoded = encode_frame(frame, parameters)
+            if encoded is None:
                 continue
-            row = (int(frame_id), time.monotonic_ns(), encoded.tobytes())
+            row = (int(frame_id), time.monotonic_ns(), encoded)
             with self.condition:
                 self.latest[camera] = row
                 self.condition.notify_all()
