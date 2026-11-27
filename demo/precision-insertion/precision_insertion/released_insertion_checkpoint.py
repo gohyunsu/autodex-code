@@ -1,10 +1,9 @@
-"""VLM label from post-release clear-view socket images.
+"""VLM label from paired initial-key and post-release socket images.
 
 The held pre-insertion snapshot remains a separate metric-XY source.  It is
 bound here only to prove that it preceded the guarded stroke; it is not shown
-to the final success classifier. Initial and final raw captures remain paired
-in the checkpoint for provenance and manual review; the model receives only
-the final socket crop for each camera.
+to the final success classifier.  For each selected camera the model receives
+the initial tabletop-key crop followed by the final clear-view socket crop.
 """
 
 from __future__ import annotations
@@ -278,26 +277,29 @@ def assess_released_insertion_checkpoint(
             decision_timestamp_s < final_end):
         raise ValueError(
             "initial, preinsert, stroke, release and final images are not ordered")
-    frames, inputs = _image_frames(
+    initial_frames, inputs = _image_frames(
         initial_image_root, initial, cameras, "initial_tabletop")
     later, later_inputs = _image_frames(
         final_root, final, cameras, "final_clear_view",
         live_capture=final_capture)
-    initial_sizes = {frame.camera_id: frame.image.size for frame in frames}
+    initial_sizes = {frame.camera_id: frame.image.size
+                     for frame in initial_frames}
     if any(initial_sizes[frame.camera_id] != frame.image.size
            for frame in later):
         raise ValueError("initial/final temporal pair changed image geometry")
     temporal_change = socket_temporal_change(
-        frames, later,
+        initial_frames, later,
         ((initial.get("consistency", {}).get("socket_exclusion") or {})
          .get("per_camera", {})))
+    frames, initial_visual_crops = _focus_initial_key_frames(
+        initial_frames, initial_root)
     later, final_visual_crops = _focus_final_frames(
         later, initial, allow_partial_projection=True)
     frames.extend(later)
     inputs.extend(later_inputs)
     visual = observe_released_insertion_visual(
         backend, frames, min_long_side_px=FINAL_MIN_LONG_SIDE_PX,
-        prompt_version="v3")
+        prompt_version="v4")
     visual_record = visual.to_record()
     supported = _released_visual_supported(
         visual_record, set(cameras), minimum_visual_views)
@@ -331,7 +333,8 @@ def assess_released_insertion_checkpoint(
         "release_record_path": str(release_path),
         "release_record_sha256": _sha(release_path),
         "frames": inputs, "visual": visual_record,
-        "visual_input_policy": "final_socket_crop_token_v5",
+        "visual_input_policy": "paired_initial_key_final_socket_token_v1",
+        "initial_visual_crops": initial_visual_crops,
         "final_visual_crops": final_visual_crops,
         "socket_temporal_change": temporal_change,
         "final_camera_selection": {
@@ -449,24 +452,33 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
                     "all_available_views"}:
                 raise ValueError("released-insertion view policy is invalid")
     policy = report.get("visual_input_policy")
-    new_policy = policy in ("final_socket_crop_token_v1",
-                            "final_socket_crop_token_v2",
-                            "final_socket_crop_token_v3",
-                            "final_socket_crop_token_v4",
-                            "final_socket_crop_token_v5")
+    final_only_policies = {
+        "final_socket_crop_token_v1", "final_socket_crop_token_v2",
+        "final_socket_crop_token_v3", "final_socket_crop_token_v4",
+        "final_socket_crop_token_v5",
+    }
+    paired_policy = policy == "paired_initial_key_final_socket_token_v1"
+    token_policy = policy in final_only_policies or paired_policy
     if policy not in (None, "final_socket_crop_token_v1",
                        "final_socket_crop_token_v2",
                        "final_socket_crop_token_v3",
                        "final_socket_crop_token_v4",
-                       "final_socket_crop_token_v5"):
+                       "final_socket_crop_token_v5",
+                       "paired_initial_key_final_socket_token_v1"):
         raise ValueError("unknown released-insertion visual input policy")
-    if new_policy and "final_visual_crops" not in report:
+    if token_policy and "final_visual_crops" not in report:
         raise ValueError("released-insertion final socket crops are missing")
-    if "initial_visual_crops" in report and not new_policy:
+    if paired_policy and "initial_visual_crops" not in report:
+        raise ValueError("released-insertion initial key crops are missing")
+    initial_focused_by_camera = {}
+    if "initial_visual_crops" in report:
         replay_frames, _ = _image_frames(
             initial_image_root, initial, sorted(grouped["initial_tabletop"]),
             "initial_tabletop")
-        _, expected_crops = _focus_initial_key_frames(replay_frames, initial_root)
+        focused_initial, expected_crops = _focus_initial_key_frames(
+            replay_frames, initial_root)
+        initial_focused_by_camera = {
+            frame.camera_id: frame for frame in focused_initial}
         if report["initial_visual_crops"] != expected_crops:
             raise ValueError("released-insertion initial key crops changed")
         aggregation = report["visual"].get("aggregation") or {}
@@ -475,7 +487,8 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
                 aggregation.get("per_view", [])):
             if camera in expected_crops:
                 images = (row.get("input_transform") or {}).get("images") or []
-                if (len(images) != 2 or
+                expected_count = 2 if (paired_policy or not token_policy) else 1
+                if (len(images) != expected_count or
                         images[0].get("source_rgb_sha256") !=
                         expected_crops[camera]["crop_rgb_sha256"]):
                     raise ValueError("released-insertion initial VLM crop changed")
@@ -485,9 +498,9 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
             "final_clear_view")
         focused_frames, expected_crops = _focus_final_frames(
             replay_frames, initial,
-            allow_partial_projection=policy in (
+            allow_partial_projection=(paired_policy or policy in (
                 "final_socket_crop_token_v3", "final_socket_crop_token_v4",
-                "final_socket_crop_token_v5"))
+                "final_socket_crop_token_v5")))
         if report["final_visual_crops"] != expected_crops:
             raise ValueError("released-insertion socket crops changed")
         aggregation = report["visual"].get("aggregation") or {}
@@ -495,14 +508,18 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
         for camera, row in zip(
                 aggregation.get("completed_camera_ids", []),
                 aggregation.get("per_view", [])):
-            if new_policy:
+            if token_policy:
                 minimum_px = (
                     FINAL_MIN_LONG_SIDE_PX
-                    if policy == "final_socket_crop_token_v5" else
+                    if paired_policy or policy == "final_socket_crop_token_v5"
+                    else
                     None if policy == "final_socket_crop_token_v1" else
                     LEGACY_FINAL_MIN_LONG_SIDE_PX)
                 _, expected_transform = resize_classification_images(
-                    [focused_by_camera[camera].image],
+                    ([initial_focused_by_camera[camera].image,
+                      focused_by_camera[camera].image]
+                     if paired_policy else
+                     [focused_by_camera[camera].image]),
                     RELEASED_SOCKET_IMAGE_SIZE,
                     min_long_side_px=minimum_px)
                 if row.get("input_transform") != expected_transform:
@@ -510,15 +527,17 @@ def verify_released_insertion_checkpoint(path: Path) -> dict:
             if camera in expected_crops:
                 transform = row.get("input_transform") or {}
                 images = transform.get("images") or []
-                index = 0 if new_policy else 1
-                if (len(images) != (1 if new_policy else 2) or
+                index = 1 if paired_policy or not token_policy else 0
+                expected_count = 2 if paired_policy or not token_policy else 1
+                if (len(images) != expected_count or
                         images[index].get("source_rgb_sha256") !=
                         expected_crops[camera]["crop_rgb_sha256"]):
                     raise ValueError("released-insertion VLM crop input changed")
-    if new_policy:
+    if token_policy:
         verify_released_socket_token_consensus(
             report["visual"], grouped["initial_tabletop"],
-            prompt_version=("v3" if policy == "final_socket_crop_token_v5"
+            prompt_version=("v4" if paired_policy else
+                            "v3" if policy == "final_socket_crop_token_v5"
                             else "v2" if policy == "final_socket_crop_token_v4"
                             else "v1"))
     else:

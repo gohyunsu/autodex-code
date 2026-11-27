@@ -617,6 +617,35 @@ def test_released_visual_batch_routes_each_camera_to_remote_worker():
         verify_released_socket_token_consensus(tampered, set(cameras))
 
 
+def test_released_visual_pair_batch_routes_two_images_per_remote_camera():
+    class RoutedPairBatch:
+        model = "saved-test-model"
+        independent_remote_inference = True
+
+        def infer_many(self, requests):
+            cameras = []
+            for images, prompt in requests:
+                assert len(images) == 2
+                match = re.match(r"Camera (\d+)\. ", prompt)
+                assert match is not None
+                assert "Image 1" in prompt and "Image 2" in prompt
+                cameras.append(match.group(1))
+            assert cameras == ["1", "2", "3"]
+            return ["B", "B", "A"]
+
+    image = Image.new("RGB", (32, 32), "white")
+    cameras = ("1", "2", "3")
+    frames = [LabeledFrame(camera, phase, stamp, image)
+              for camera in cameras
+              for phase, stamp in (("initial_tabletop", 1.0),
+                                   ("final_clear_view", 2.0))]
+    saved = observe_released_insertion_visual(
+        RoutedPairBatch(), frames, prompt_version="v4").to_record()
+    assert saved["parsed"]["visual_class"] == "inside_socket"
+    verify_released_socket_token_consensus(
+        saved, set(cameras), prompt_version="v4")
+
+
 def test_xy_and_metric_grounding_fan_out_to_selected_workers():
     class FiveWorkers:
         model = "saved-test-model"

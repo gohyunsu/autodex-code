@@ -362,8 +362,12 @@ def test_released_label_pairs_initial_and_clear_view_raw_per_camera(
     assert report["outcome"]["insertion_success"] is True
     assert report["effective_vlm_class"] == "inside_socket"
     assert len(backend.calls) == 2
-    assert all(len(images) == 1 for images, _prompt in backend.calls)
-    assert report["visual_input_policy"] == "final_socket_crop_token_v5"
+    assert all(len(images) == 2 for images, _prompt in backend.calls)
+    assert all("Image 1" in prompt and "Image 2" in prompt
+               for _images, prompt in backend.calls)
+    assert report["visual_input_policy"] == (
+        "paired_initial_key_final_socket_token_v1")
+    assert "initial_visual_crops" in report
     assert report["socket_temporal_change"]["schema"] == (
         "precision_insertion_socket_temporal_change_v1")
     saved = write_released_insertion_checkpoint(

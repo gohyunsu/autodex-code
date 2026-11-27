@@ -28,8 +28,11 @@ used at pre-insertion.
    planner.
 7. After each completed XY or tilt move, a newer tracker pose is consumed.
    No extra still image or Qwen call is made for this reobservation.
-8. The existing Jacobian socket-axis handoff, guarded 20 mm insertion,
-   release/clear-view and VLM success label are unchanged.
+8. The existing Jacobian socket-axis handoff and guarded 20 mm insertion run.
+   The gripper then opens and the arm reaches clear view before the final VLM
+   label.  Each VLM request receives two raw, overlay-free crops from one
+   camera: the initial tabletop key and the final socket.  The per-camera A/B
+   answers are combined by the configured-camera majority.
 
 The tabletop support fit is a pose recovery step, not a new pass/fail gate.
 It handles both the `000` end-down and `001` side-down cylinder classes. The
@@ -171,6 +174,19 @@ existing home behavior.
 The profile enables XY and axis correction and keeps the ordinary 10 mm
 per-motion XY discretization. It does not change the VLM-only final label or
 the 20 mm insertion target.
+
+The current released-outcome prompt is intentionally short:
+
+```text
+Image 1 shows the narrow solid white key before the trial. Image 2 shows the
+large white socket after release and clear view. B = a key of that shape
+protrudes from inside the socket rim. A = the socket opening is empty or the
+key is outside it. Reply A or B.
+```
+
+The two images always come from the same calibrated camera. No CAD overlay is
+shown to this classifier. The checkpoint records both crop hashes, the raw
+token from every camera and the deterministic majority result.
 
 ## Evidence written per run
 

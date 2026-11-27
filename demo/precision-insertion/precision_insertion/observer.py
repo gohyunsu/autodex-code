@@ -913,12 +913,12 @@ def observe_released_insertion_visual(
     min_long_side_px: int | None = None,
     prompt_version: str = "v2",
 ) -> VLMObservation:
-    """Judge the final socket crop; retain the initial image as trial evidence.
+    """Judge released insertion independently for each calibrated camera.
 
-    Paired source captures still bind identity and chronology. On six saved
-    capture4 trials, a short A/B question over the final socket crop gave a
-    correct three-view majority in offline replay. Each camera is asked
-    independently and its original token is retained for review.
+    Versions v1--v3 preserve the recorded final-only classifier.  Version v4
+    receives the initial key crop and final socket crop from the *same* camera
+    in that order.  Each camera is still asked independently and its original
+    token is retained for deterministic review.
     """
     phases = {frame.phase for frame in frames}
     if not {"initial_tabletop", "final_clear_view"} <= phases:
@@ -928,17 +928,23 @@ def observe_released_insertion_visual(
         frames, before="initial_tabletop", after="final_clear_view")
     order = _frame_order(frames)
     cameras = sorted({frame.camera_id for frame in frames})
+    paired_input = prompt_version == "v4"
 
     def request_for_camera(camera: str):
+        initial = next(frame for frame in frames if
+                       frame.camera_id == camera and
+                       frame.phase == "initial_tabletop")
         final = next(frame for frame in frames if
                      frame.camera_id == camera and
                      frame.phase == "final_clear_view")
         images, transform = resize_classification_images(
-            [final.image], RELEASED_SOCKET_IMAGE_SIZE,
+            ([initial.image, final.image] if paired_input else [final.image]),
+            RELEASED_SOCKET_IMAGE_SIZE,
             min_long_side_px=min_long_side_px)
-        return final, images, transform
+        return initial, final, images, transform
 
-    def observation_from_answer(camera: str, final: LabeledFrame,
+    def observation_from_answer(camera: str, initial: LabeledFrame,
+                                final: LabeledFrame,
                                 transform: dict, answer: str, prompt: str,
                                 latency_s: float) -> VLMObservation:
         parsed, error = _released_socket_token_result(
@@ -946,24 +952,28 @@ def observe_released_insertion_visual(
         return VLMObservation(
             "released_insertion_visual", parsed, answer,
             prompt,
-            (f"final_clear_view/{camera}@{final.timestamp_s:.6f}",),
+            ((f"initial_tabletop/{camera}@{initial.timestamp_s:.6f}",
+              f"final_clear_view/{camera}@{final.timestamp_s:.6f}")
+             if paired_input else
+             (f"final_clear_view/{camera}@{final.timestamp_s:.6f}",)),
             error, _backend_model(backend), latency_s,
             input_transform=transform)
 
     def observe_camera(camera: str) -> VLMObservation:
-        final, images, transform = request_for_camera(camera)
+        initial, final, images, transform = request_for_camera(camera)
         prompt = _released_socket_token_prompt(prompt_version)
         started = time.perf_counter()
         with timed("vlm.infer", phase="vlm", kind="inference",
                    stage="released_insertion_visual", camera_id=camera,
-                   image_count=1, image_sizes=[list(images[0].size)],
+                   image_count=len(images),
+                   image_sizes=[list(image.size) for image in images],
                    model=_backend_model(backend)):
             infer_for_camera = getattr(backend, "infer_for_camera", None)
             answer = (infer_for_camera(camera, images, prompt)
                       if callable(infer_for_camera) else
                       backend.infer(images, prompt))
         return observation_from_answer(
-            camera, final, transform, answer, prompt,
+            camera, initial, final, transform, answer, prompt,
             time.perf_counter() - started)
 
     # Local Qwen can decode independent camera questions in one GPU pass.
@@ -980,17 +990,18 @@ def observe_released_insertion_visual(
                    gpu_batch_size=len(cameras)):
             with timed("vlm.infer", phase="vlm", kind="inference",
                        stage="released_insertion_visual", camera_id="multiple",
-                       camera_ids=cameras, image_count=len(cameras),
+                       camera_ids=cameras,
+                       image_count=len(cameras) * (2 if paired_input else 1),
                        model=_backend_model(backend)):
                 answers = infer_many([
                     (images, prompt)
-                    for (_, images, _), prompt in zip(prepared, prompts)])
+                    for (_, _, images, _), prompt in zip(prepared, prompts)])
         elapsed = time.perf_counter() - started
         if len(answers) != len(cameras):
             raise RuntimeError("released socket batch returned wrong view count")
         observations = [observation_from_answer(
-            camera, final, transform, answer, prompt, elapsed)
-            for camera, (final, _, transform), answer, prompt
+            camera, initial, final, transform, answer, prompt, elapsed)
+            for camera, (initial, final, _, transform), answer, prompt
             in zip(cameras, prepared, answers, prompts)]
         total_latency_s = elapsed
     else:
@@ -1004,8 +1015,11 @@ def observe_released_insertion_visual(
     return VLMObservation(
         "released_insertion_visual", parsed,
         json.dumps(parsed, sort_keys=True),
-        "Only the final raw socket crop is classified per camera; paired "
-        "initial/final captures remain bound to this checkpoint.",
+        ("Each camera independently compares its initial raw key crop with "
+         "its final raw socket crop."
+         if paired_input else
+         "Only the final raw socket crop is classified per camera; paired "
+         "initial/final captures remain bound to this checkpoint."),
         order, None, _backend_model(backend),
         total_latency_s, aggregation={
             "schema": "precision_insertion_released_socket_token_consensus_v1",
@@ -1019,6 +1033,13 @@ def observe_released_insertion_visual(
 
 
 def _released_socket_token_prompt(version: str = "v2") -> str:
+    if version == "v4":
+        return (
+            "Image 1 shows the narrow solid white key before the trial. "
+            "Image 2 shows the large white socket after release and clear "
+            "view. B = a key of that shape protrudes from inside the socket "
+            "rim. A = the socket opening is empty or the key is outside it. "
+            "Reply A or B.")
     if version == "v3":
         return (
             "Classify the large white socket: B = narrow solid peg inserted "
@@ -1047,7 +1068,7 @@ def _released_socket_token_result(
         raise TypeError("released socket VLM answer must be text")
     token = answer.strip().rstrip(".").upper()
     classes = ({"B": "inside_socket", "A": "outside_socket"}
-               if version == "v3" else
+               if version in {"v3", "v4"} else
                {"INSIDE": "inside_socket", "OUTSIDE": "outside_socket",
                 "UNCLEAR": "unobservable"})
     visual_class = classes.get(token, "unobservable")
@@ -1075,14 +1096,22 @@ def verify_released_socket_token_consensus(
             not isinstance(rows, list) or len(rows) != len(ordered) or
             len(visual.get("image_order", [])) != 2 * len(ordered)):
         raise ValueError("invalid released socket token consensus")
+    paired_input = prompt_version == "v4"
     for camera, row in zip(ordered, rows):
-        expected_order = next((label for label in visual["image_order"]
-                               if label.startswith(f"final_clear_view/{camera}@")), None)
+        initial_order = next((label for label in visual["image_order"]
+                              if label.startswith(
+                                  f"initial_tabletop/{camera}@")), None)
+        final_order = next((label for label in visual["image_order"]
+                            if label.startswith(
+                                f"final_clear_view/{camera}@")), None)
+        expected_order = ([initial_order, final_order] if paired_input else
+                          [final_order])
         parsed, error = _released_socket_token_result(
             row.get("raw_answer"), camera, version=prompt_version)
-        if (expected_order is None or row.get("stage") !=
+        if (row.get("stage") !=
                 "released_insertion_visual" or
-                row.get("image_order") != [expected_order] or
+                any(value is None for value in expected_order) or
+                row.get("image_order") != expected_order or
                 row.get("prompt") != (
                     f"Camera {camera}. {_released_socket_token_prompt(prompt_version)}"
                     if routed_batch else

@@ -533,6 +533,30 @@ def test_released_socket_ab_prompt_uses_three_view_majority_and_replays_tokens()
         result.to_record(), set(cameras), prompt_version="v3")
 
 
+def test_released_socket_pair_prompt_receives_same_camera_initial_and_final():
+    cameras = ("front", "side", "wide")
+    frames = [
+        LabeledFrame(camera, phase, timestamp, _image())
+        for camera in cameras
+        for phase, timestamp in (("initial_tabletop", 1.0),
+                                 ("final_clear_view", 2.0))
+    ]
+    backend = FakeBackend("B", "B", "A")
+    result = observe_released_insertion_visual(
+        backend, frames, prompt_version="v4")
+    assert result.parsed["visual_class"] == "inside_socket"
+    assert all(len(images) == 2 for images, _prompt in backend.calls)
+    assert all("Image 1" in prompt and "Image 2" in prompt
+               for _images, prompt in backend.calls)
+    for camera, row in zip(cameras, result.aggregation["per_view"]):
+        assert row["image_order"] == [
+            f"initial_tabletop/{camera}@1.000000",
+            f"final_clear_view/{camera}@2.000000",
+        ]
+    verify_released_socket_token_consensus(
+        result.to_record(), set(cameras), prompt_version="v4")
+
+
 def test_small_final_socket_crop_is_enlarged_without_changing_source_pixels():
     from precision_insertion.observer import resize_classification_images
 

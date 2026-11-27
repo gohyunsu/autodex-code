@@ -23,7 +23,7 @@ not a claim that the gate has passed.
   `20261126_212743_final_multiview/table_plane.json`
 - Support height in the Franka base frame: `0.06336083895817991 m`
 - Plane fit: 54/54 triangulated corners, four cameras, RMS `0.424 mm`
-- Runtime end effector: Franka gripper
+- Runtime end effector: Robotiq 2F-85 (`PRECISION_END_EFFECTOR=robotiq_2f85`)
 - Runtime object family: cylindrical key, gap-5 fixture
 
 The support-plane record was produced with the active 2026-11-18 extrinsic
@@ -45,7 +45,7 @@ Observed result:
 
 - board-free launch config resolved;
 - four capture4 cameras resolved;
-- the gap-5 Franka-gripper endpoint catalog loaded;
+- the gap-5 Robotiq 2F-85 endpoint catalog loaded;
 - both cylinder tabletop pose stems were available with ten eligible
   candidates: eight upright/end-down radial approaches in `000` and two
   side-down top-down wrist flips in `001`;
@@ -77,6 +77,22 @@ The capture4 manager invokes the native tracker with the four commissioned
 cameras and with `min-score`, workspace and pose-jump rejection disabled.  The
 precision runner likewise adds no confidence, age, workspace or task-success
 gate to tracker output.
+
+The four-camera calibration identity was recomputed independently from the
+kds-Z790 active files and the capture4 tracker copies. Both resolved to the
+same intrinsic/extrinsic hashes:
+
+```text
+precision_calib_v1:26053248,25322639,25305462,25322642:
+7d412a3ae834d0e7b53f9cfd4576fe1e4b63f409d95ec4e9ecede07322384f70:
+a43905fc73e2186548b70a7402ad84eb7bf14eed7a261a37a192605c5bf95a4d
+```
+
+The installed capture4 streamer/manager also match the current branch by
+SHA256. A prior isolated tracker run published 9,700 poses at an average
+15.38 Hz with native-valid fraction 1.0 before a clean session stop. This
+proves the deployed four-view tracker loop, but not continuous tracking during
+a completed robot pickup/transfer episode.
 
 ## Capture4 Qwen execution check
 
@@ -118,10 +134,11 @@ Gate 2 passes only after one physical episode preserves all of the following:
 8. post-correction tracker pose;
 9. robot state and synchronized video covering the same interval.
 
-No archived run under the current ZeroDex run root contains
-`initialization.json`, `first_pose.json` or an MV-GoTrack pose trace.  Therefore
-the software path is preflight-ready, but physical continuous tracking is not
-yet established.
+No completed archived robot episode under the current ZeroDex run root binds
+`initialization.json`, `first_pose.json`, the continuous pose journal and all
+pickup/lift/transfer controller records into one attempt. Therefore the
+software path and isolated tracker are verified, but physical continuous
+tracking through a completed manipulation episode is not yet established.
 
 ## Next physical command boundary
 
