@@ -16,8 +16,10 @@ import numpy as np
 from autodex.utils.conversion import cart2se3
 from autodex.utils.robot_config import INSPIRE_INIT
 
-from .analytic_gripper import (analytic_franka_gripper_grasp,
-                               match_cylinder_tabletop_stem)
+from .analytic_gripper import (
+    analytic_franka_gripper_grasp_for_candidate,
+    match_cylinder_tabletop_stem,
+)
 from .candidates import planner_candidate_override, select_pose_candidates
 from .assets import AssetPaths
 from .curobo_compat import install_curobo_planner_compat
@@ -34,6 +36,7 @@ from .repose_release import plan_repose_release_exit
 from .repose_transition import (
     ReposeTransitionPreflight, preflight_v8_repose_transition,
 )
+from .table_surface import session_support_plane_robot
 from .world import build_trial_scene_from_session
 
 
@@ -93,14 +96,16 @@ def plan_original_pose_restoration(
     observed = validate_se3(cart2se3(np.asarray(
         scene["mesh"]["target"]["pose"], dtype=float)),
         name="fresh tabletop T_robot_key")
+    support_normal_robot = None
     if spec.name == "franka_gripper":
         if mode.family != "cylinder":
             raise ValueError(
                 "deterministic Franka-gripper restoration supports cylinder mode")
+        support_normal_robot, _ = session_support_plane_robot(calibration)
         source = match_cylinder_tabletop_stem(
             observed,
             tabletop_dir=AssetPaths(shared_root, mode).key_tabletop_dir,
-            table_normal_robot=np.asarray([0.0, 0.0, 1.0]))["stem"]
+            table_normal_robot=support_normal_robot)["stem"]
     else:
         source = classify_key_tabletop_pose(
             mode=mode, shared_root=shared_root, pose_robot_key=observed,
@@ -157,8 +162,10 @@ def plan_original_pose_restoration(
         key = tuple(row["key"])
         analytic = None
         if spec.name == "franka_gripper":
-            analytic = analytic_franka_gripper_grasp(
-                observed, table_normal_robot=np.asarray([0.0, 0.0, 1.0]))
+            assert support_normal_robot is not None
+            analytic = analytic_franka_gripper_grasp_for_candidate(
+                observed, table_normal_robot=support_normal_robot,
+                identifier=key)
             override = analytic.candidate_override(identifier=key)
         else:
             override = planner_candidate_override(

@@ -18,7 +18,7 @@ audit.
 | ZeroDex machine binding | `zerodex_capture4.env.sh` owns capture4 serials/host, local cache paths, NAS namespace and the straight-mount FR3 profile. `zerodex_franka_integration.py` changes routing only inside the process. |
 | Board-free perception | The default launcher records `scene_mode=board_free`, uses the commissioned robot/camera extrinsics and measured table plane, and removes board-ID/corner fields from the effective launch. The fixed cylindrical socket is localized directly from its four SAM masks, known CAD body and saved support plane (`table_constrained_body`); socket FoundPose is not run or required. Key pose remains the same-session SAM3+FoundPose input to MV-GoTrack. Socket and key prompts do not require an object to be “on a board,” and both upright and side-down cylindrical-key conditioning use the same measured support plane. |
 | End-effector modes | ZeroDex defaults to `franka_gripper`; `PRECISION_END_EFFECTOR=inspire` preserves the original Inspire/BODex route. Each mode has an independent URDF, joint width and candidate namespace. Gripper startup does not import Inspire Modbus. The Franka executor, ParaDex client and selected daemon share the metric-width `open_gripper`/`grasp`/feedback protocol. |
-| Tabletop grasp coverage | The gripper catalogue contains one deterministic analytic cylindrical grasp for each supported tabletop class (`end_down`/`000` and `side_down`/`001`). Both retain the same endpoint collision contract; Inspire keeps its screened BODex catalogue. The FR3/gripper planner uses cuRobo's stock Franka palm/finger collision-sphere profile rather than the former two-sphere palm approximation. |
+| Tabletop grasp coverage | The gripper catalogue contains eight symmetry-equivalent radial approaches for the upright/end-down class (`000`) and two top-down wrist flips for the side-down class (`001`). The measured 6D key pose and frozen session support normal reconstruct every grasp at runtime; the files remain stable candidate identifiers. All ten retain the same endpoint collision contract. Inspire keeps its independent screened BODex catalogue. The FR3/gripper planner uses cuRobo's stock Franka palm/finger collision-sphere profile rather than the former two-sphere palm approximation. |
 | Four-camera evidence | Every checkpoint captures all four commissioned cameras. Socket-pose inliers and measured residuals may select a smaller inference subset; camera evidence is not discarded or permanently blacklisted. |
 | Full action loop | The active profile supplies all ten stage handlers: key planning, pickup, lift, held relation, transfer/insertion, retry diagnosis, held return, transfer recovery, repose planning and repose execution. |
 | Same-trial correction | Pre-insertion capture, metric endpoint/partial-shape observation, bounded wrist correction, recapture and measured-motion feedback run before the first insertion stroke. The active profile permits a 10 mm per-update step and has no cumulative XY cap. |
@@ -34,7 +34,8 @@ audit.
 ## Verified evidence
 
 - The static ZeroDex preflight passes in both end-effector modes. The gripper
-  mode has 2/2 eligible deterministic candidates, one for each tabletop pose;
+  mode has 10/10 eligible deterministic candidates: eight radial approaches
+  for upright/end-down and two wrist flips for side-down;
   Inspire retains 126 catalogued and 114 eligible candidates. Both report
   four configured cameras, board-free mode, no legacy runtime path and no NAS
   reference outside `/mnt/paradex2/hyunsu`.
@@ -102,8 +103,11 @@ audit.
   changes and zero unexpected shared-runtime changes. This avoids treating
   unrelated calibration work in the development checkout as part of the
   precision runtime.
-- The final merged branch at `299ddc3` passed the complete demo suite with
-  **1616 passed, 4 skipped**.
+- The current worktree passed the complete demo suite with
+  **1623 passed, 4 skipped**. This includes regression coverage for the ten
+  deterministic gripper candidates and for retaining the measured board-free
+  support-plane tilt in key conditioning, tabletop classification, grasp
+  construction and failed-attempt restoration.
 - A real local-CUDA synthetic gripper diagnostic now preserves the FR3
   profile's 32 trajectory-optimization seeds even though the ZeroDex planner
   binds explicit checkout-local robot YAML paths. The former generic
@@ -118,6 +122,15 @@ audit.
   grasps, planner/preflight assembly, MV-GoTrack initialization and pose use,
   symmetry-aware endpoint/axis correction, insertion/release/outcome/retry,
   and both end-effector executors.
+- A 2026-11-27 local-CUDA preflight used the freshly measured upright key and
+  frozen socket pose with the expanded eight-candidate upright catalogue. It
+  inspected candidates `000` through `006` and stopped at the first complete
+  pass. Candidates `000`--`003` had no pickup IK, `004` reached pickup IK but
+  not the held lift, `005` passed pickup/lift/transfer but reached a joint
+  limit at the 10 mm axial waypoint, and `006` passed pickup, held lift,
+  transfer, the complete sampled axial path and the nominal 20 mm insertion
+  endpoint. Candidate `007` was not inspected after that success. The saved
+  result is offline cuRobo evidence, not a physical grasp or insertion label.
 - Real 5 mm-gap episodes exercised the full pickup/transfer/insertion/release
   route. In particular, attempts
   `attempt_3c8ff1b830d347a2b8c45aa7ae1a5363` and
@@ -155,7 +168,7 @@ audit.
 
 | Item | Current evidence / next action |
 | --- | --- |
-| Current hardware execution | The RT kernel is active, `enp4s0` is up at `172.16.1.10/24`, and a local Franka daemon process is listening on ports 5555/5556. The 2026-11-27 repeat still left `172.16.1.11` unresolved at ARP (`INCOMPLETE`) and returned `Destination Host Unreachable`; no live robot state or motion was claimed. Restore the robot-side power/cable/switch/IP/Desk path before using the existing daemon, and select either `franka_gripper` (default) or `inspire`. The audit intentionally issued no motion command. |
+| Current hardware execution | The RT kernel is active and `enp4s0` is up at `172.16.1.10/24`. On the latest read-only repeat, `172.16.1.11` resolved at ARP and answered ICMP in 0.192 ms, while local ports 5555/5556 were listening. The state-only subscriber nevertheless received no two advancing packets within two seconds, so an active daemon-to-FR3 state stream is not yet proven and no motion was issued. Restart or inspect the selected daemon before a physical run; use `franka_gripper` by default or explicitly select the preserved `inspire` mode. |
 | Local cuRobo GPU preflight | The first gripper preflight exposed and fixed both a stale `~/shared_data/AutoDex` planner-YAML fallback and the explicit-YAML 1,024-seed regression. With the restored FR3 32-seed profile and stock Franka gripper collision spheres, the real local-CUDA diagnostic passed `side_down` pickup, approach and held lift while the unrelated GPU process remained resident. It then reported `transfer_unreachable` for the hypothetical socket placement; no physical scene or robot command was involved. On 2026-11-27 `/dev/nvidia*`, `nvidia-smi`, and PyTorch CUDA were available again on the RTX 3090. |
 | Physical gripper/MV-GoTrack run | Code, assets, capture4 services and tracker deployment are present, but the new gripper pickup-to-insertion route and same-session tracker initialization have not been physically exercised. First run GPU cuRobo preflight, then initialize tracking from a fresh accepted key pose; do not substitute an arbitrary or stale tracker initializer. |
 | Reproduction bundle | The writable NAS manifest now archives merged AutoDex commit `299ddc3`, ParaDex `e2cd4fd`, and nvdiffrast `253ac4f`, and retains 6,861 declared asset files. `--refresh-code-only` no longer scans or mutates the established asset/rig inventories. Both NFS and SMB full-tree verification later entered remote-filesystem response waits while traversing the runtime view, so the post-refresh metadata/SHA256 audit remains to be repeated when NAS metadata service is responsive; the manifest and all three declared code archives are present from both mount views. |

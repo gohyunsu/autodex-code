@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create the two symmetry-reduced cylinder/gripper seed assets.
+"""Create symmetry-reduced cylinder/gripper seed assets.
 
 These records are not sampled BODex grasps.  They are deterministic parallel-
 jaw geometry for the two cylindrical tabletop classes.  At runtime the same
@@ -16,7 +16,10 @@ from pathlib import Path
 
 import numpy as np
 
-from precision_insertion.analytic_gripper import analytic_franka_gripper_grasp
+from precision_insertion.analytic_gripper import (
+    SIDE_DOWN_WRIST_VARIANTS, UPRIGHT_APPROACH_VARIANTS,
+    analytic_franka_gripper_grasp_for_candidate,
+)
 from precision_insertion.config import select_mode
 from precision_insertion.geometry import validate_se3
 from autodex.utils.conversion import se32cart
@@ -68,34 +71,8 @@ def build(shared_root: Path) -> dict:
         key_pose = validate_se3(
             np.load(tabletop_dir / f"{stem}.npy", allow_pickle=False),
             name=f"cylinder tabletop {stem}")
-        grasp = analytic_franka_gripper_grasp(
-            key_pose, table_normal_robot=np.asarray([0.0, 0.0, 1.0]))
-        candidate = candidate_root / str(scene_id) / "000"
-        _save_npy_exact(candidate / "wrist_se3.npy",
-                        grasp.T_key_hand.astype(np.float64))
-        _save_npy_exact(candidate / "pregrasp_pose.npy",
-                        grasp.pregrasp_q.astype(np.float64))
-        _save_npy_exact(candidate / "grasp_pose.npy",
-                        grasp.grasp_q.astype(np.float64))
-        contract = {
-            "schema": "precision_insertion_franka_gripper_analytic_grasp_v1",
-            "key_object": mode.key_object,
-            "gripper": "franka_stock_parallel_gripper",
-            "tabletop_pose_stem": stem,
-            "tabletop_class": grasp.tabletop_class,
-            "construction": "measured_6d_pose_deterministic_parallel_jaw",
-            "runtime_contract": (
-                "canonical files are catalog identifiers; runtime reconstructs "
-                "the grasp from the fresh measured T_robot_key"),
-            "symmetry": {
-                "axial_roll": "continuous_equivalence",
-                "end_exchange": "equivalent",
-                "tabletop_classes": ["end_down", "side_down"],
-            },
-            "physical_validation": False,
-            "robot_ready": False,
-        }
-        _write_exact(candidate / "analytic_grasp.json", _json_bytes(contract))
+        variant_count = (UPRIGHT_APPROACH_VARIANTS if scene_id == 0 else
+                         SIDE_DOWN_WRIST_VARIANTS)
         scene = {
             "scene": {
                 "mesh": {"target": {
@@ -111,17 +88,60 @@ def build(shared_root: Path) -> dict:
             },
             "meta": {
                 "pose_idx": stem,
-                "param": {"placement": grasp.tabletop_class},
+                "param": {"placement": (
+                    "end_down" if scene_id == 0 else "side_down")},
                 "symmetry_reduced": True,
                 "end_effector": "franka_gripper",
             },
         }
         scene_path = scene_root / f"{scene_id}.json"
         _write_exact(scene_path, _json_bytes(scene))
-        rows.append({"scene_id": scene_id, "tabletop_pose_stem": stem,
-                     "tabletop_class": grasp.tabletop_class,
-                     "candidate_dir": str(candidate),
-                     "scene": str(scene_path)})
+        for variant in range(variant_count):
+            identifier = ("table", str(scene_id), f"{variant:03d}")
+            grasp = analytic_franka_gripper_grasp_for_candidate(
+                key_pose, table_normal_robot=np.asarray([0.0, 0.0, 1.0]),
+                identifier=identifier)
+            candidate = candidate_root / str(scene_id) / f"{variant:03d}"
+            _save_npy_exact(candidate / "wrist_se3.npy",
+                            grasp.T_key_hand.astype(np.float64))
+            _save_npy_exact(candidate / "pregrasp_pose.npy",
+                            grasp.pregrasp_q.astype(np.float64))
+            _save_npy_exact(candidate / "grasp_pose.npy",
+                            grasp.grasp_q.astype(np.float64))
+            contract = {
+                "schema": "precision_insertion_franka_gripper_analytic_grasp_v1",
+                "key_object": mode.key_object,
+                "gripper": "franka_stock_parallel_gripper",
+                "tabletop_pose_stem": stem,
+                "tabletop_class": grasp.tabletop_class,
+                "variant_index": variant,
+                "variant_count": variant_count,
+                "construction": "measured_6d_pose_deterministic_parallel_jaw",
+                "runtime_contract": (
+                    "candidate ID selects one symmetry-equivalent grasp; runtime "
+                    "reconstructs it from the fresh measured T_robot_key"),
+                "symmetry": {
+                    "axial_roll": "continuous_equivalence",
+                    "end_exchange": "equivalent",
+                    "tabletop_classes": ["end_down", "side_down"],
+                },
+                "physical_validation": False,
+                "robot_ready": False,
+            }
+            # Candidate 000 predates the explicit variant metadata. Keep its
+            # byte-identical contract so asset generation remains additive.
+            if variant == 0:
+                contract.pop("variant_index")
+                contract.pop("variant_count")
+                contract["runtime_contract"] = (
+                    "canonical files are catalog identifiers; runtime reconstructs "
+                    "the grasp from the fresh measured T_robot_key")
+            _write_exact(candidate / "analytic_grasp.json", _json_bytes(contract))
+            rows.append({"scene_id": scene_id, "tabletop_pose_stem": stem,
+                         "tabletop_class": grasp.tabletop_class,
+                         "variant_index": variant,
+                         "candidate_dir": str(candidate),
+                         "scene": str(scene_path)})
     return {
         "schema": "precision_insertion_franka_gripper_seed_assets_v1",
         "shared_root": str(root), "end_effector": "franka_gripper",

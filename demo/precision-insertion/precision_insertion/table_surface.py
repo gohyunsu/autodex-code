@@ -71,3 +71,33 @@ def load_table_surface(path: str | Path) -> dict:
 def load_table_surface_z(path: str | Path) -> float:
     """Return the robot-frame support height from a table-plane record."""
     return load_table_surface(path)["table_surface_z_m"]
+
+
+def session_support_plane_robot(calibration) -> tuple[np.ndarray, float]:
+    """Return the frozen session support plane in the robot frame.
+
+    ChArUco sessions describe the plane with ``T_robot_board``.  Board-free
+    sessions store the commissioned plane point and normal directly.  Legacy
+    board-free records that predate those fields remain a horizontal-plane
+    fallback, but current records preserve their measured tilt.
+    """
+    support = getattr(calibration, "board", None)
+    if not isinstance(support, dict):
+        raise ValueError("session support surface is missing")
+    if "T_robot_board" in support:
+        from .geometry import validate_se3
+
+        pose = validate_se3(support["T_robot_board"],
+                            name="measured board pose")
+        normal = -pose[:3, 2]
+        return normal, float(np.dot(pose[:3, 3], normal))
+    height = support.get("table_surface_z_m")
+    if (support.get("source") != "configured_table_surface" or
+            type(height) not in (int, float) or
+            not math.isfinite(float(height))):
+        raise ValueError("board-free session has no calibrated table plane")
+    point = support.get("plane_point_robot_m", [0.0, 0.0, float(height)])
+    normal = support.get("normal_robot", [0.0, 0.0, 1.0])
+    frame = support_frame_from_plane(point, normal)
+    up = frame[:3, 2]
+    return up, float(np.dot(frame[:3, 3], up))

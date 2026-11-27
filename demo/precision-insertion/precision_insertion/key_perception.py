@@ -37,6 +37,7 @@ from .socket_exclusion import (
     key_mask_socket_overlap_fraction, project_frozen_socket_exclusion,
 )
 from .symmetry import load_axial_symmetry
+from .table_surface import session_support_plane_robot
 
 
 @dataclass(frozen=True)
@@ -123,38 +124,16 @@ def _tabletop_cylinder_axis_layout(
 
 
 def _support_plane_robot(calibration) -> tuple[np.ndarray, float]:
-    """Return the session support-plane up vector and signed offset.
-
-    The legacy ChArUco profile supplies a full board pose.  The default
-    board-free profile supplies the commissioned horizontal table height.
-    Both describe the same robot-frame plane ``dot(point, up) = offset``.
-    """
-    support = calibration.board
-    if not isinstance(support, dict):
-        raise ValueError("session support surface is missing")
-    if "T_robot_board" in support:
-        pose = validate_se3(support["T_robot_board"],
-                            name="measured board pose")
-        up = -pose[:3, 2]
-        offset = float(np.dot(pose[:3, 3], up))
-    else:
-        height = support.get("table_surface_z_m")
-        if (support.get("source") != "configured_table_surface" or
-                type(height) not in (int, float) or
-                not math.isfinite(float(height))):
-            raise ValueError("board-free session has no calibrated table plane")
-        up = np.asarray([0., 0., 1.], dtype=np.float64)
-        offset = float(height)
-    return up, offset
+    """Compatibility wrapper for the shared frozen support-plane decoder."""
+    return session_support_plane_robot(calibration)
 
 
 def _has_session_support_plane(calibration) -> bool:
-    support = getattr(calibration, "board", None)
-    return isinstance(support, dict) and (
-        "T_robot_board" in support or
-        support.get("source") == "configured_table_surface" and
-        type(support.get("table_surface_z_m")) in (int, float) and
-        math.isfinite(float(support["table_surface_z_m"])))
+    try:
+        session_support_plane_robot(calibration)
+    except ValueError:
+        return False
+    return True
 
 
 def _support_side_down_key_on_table(

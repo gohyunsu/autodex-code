@@ -24,6 +24,9 @@ from .geometry import validate_se3
 KEY_AXIS_LOCAL = np.asarray([0.0, 0.0, 1.0], dtype=np.float64)
 KEY_CENTER_LOCAL_M = np.asarray([0.0, 0.0, 0.040], dtype=np.float64)
 KEY_DIAMETER_M = 0.030
+UPRIGHT_GRASP_ABOVE_CENTER_M = 0.015
+UPRIGHT_APPROACH_VARIANTS = 8
+SIDE_DOWN_WRIST_VARIANTS = 2
 
 
 def _unit(value, *, name: str) -> np.ndarray:
@@ -140,14 +143,16 @@ def analytic_franka_gripper_grasp(
     robot_base_position_robot: np.ndarray = np.zeros(3),
     palm_to_key_center_m: float = 0.1034,
     pregrasp_clearance_m: float = 0.080,
+    approach_azimuth_rad: float = 0.0,
+    axis_sign: int = 1,
 ) -> AnalyticGripperGrasp:
-    """Construct the fixed grasp for a lying or standing cylindrical key.
+    """Construct one grasp for a lying or standing cylindrical key.
 
     ``hand z`` is the approach direction from the palm toward the key and
     ``hand y`` is the Franka jaw-closing direction.  For a lying key the
-    approach is top-down.  For a standing key it is horizontal and selected
-    on the side away from the robot base, giving a deterministic reachable
-    representative of the cylinder's free axial yaw.
+    approach is top-down. For a standing key it is horizontal; the zero-
+    azimuth side is away from the robot base and an optional azimuth selects
+    another symmetry-equivalent radial approach.
     """
     key = validate_se3(T_robot_key, name="measured T_robot_key")
     normal = _unit(table_normal_robot, name="table normal")
@@ -158,6 +163,11 @@ def analytic_franka_gripper_grasp(
                         (pregrasp_clearance_m, "pregrasp clearance")):
         if not np.isfinite(value) or value <= 0.0:
             raise ValueError(f"{name} must be positive and finite")
+    azimuth = float(approach_azimuth_rad)
+    if not np.isfinite(azimuth):
+        raise ValueError("approach azimuth must be finite")
+    if type(axis_sign) is not int or axis_sign not in (-1, 1):
+        raise ValueError("axis sign must be +1 or -1")
 
     observed_axis = _unit(key[:3, :3] @ KEY_AXIS_LOCAL,
                           name="measured key axis")
@@ -171,8 +181,9 @@ def analytic_franka_gripper_grasp(
         axis = observed_axis - normal * float(np.dot(observed_axis, normal))
         axis = _canonical_sign(_unit(axis, name="table-parallel key axis"),
                                normal)
-        hand_x = axis
+        hand_x = float(axis_sign) * axis
         hand_z = -normal
+        grasp_center = key_center
     else:
         hand_x = (observed_axis if float(np.dot(observed_axis, normal)) >= 0.0
                   else -observed_axis)
@@ -186,7 +197,18 @@ def analytic_franka_gripper_grasp(
                 radial = np.asarray([0.0, 1.0, 0.0])
                 radial = radial - normal * float(np.dot(radial, normal))
         outward = _unit(radial, name="horizontal gripper side")
+        # The upright cylinder is invariant to axial yaw.  Sample an explicit
+        # orbit around its measured support normal so cuRobo can choose an IK-
+        # reachable side without changing the physical grasp or key pose.
+        outward = _unit(
+            np.cos(azimuth) * outward +
+            np.sin(azimuth) * np.cross(normal, outward),
+            name="yaw-shifted horizontal gripper side")
         hand_z = -outward
+        # Grasp the upper half of the standing peg. Express this from the
+        # D-infinity object center and measured support normal, not from one
+        # arbitrarily labelled cylinder end, so end exchange changes nothing.
+        grasp_center = key_center + normal * UPRIGHT_GRASP_ABOVE_CENTER_M
 
     hand_y = _unit(np.cross(hand_z, hand_x), name="jaw-closing axis")
     # Re-orthogonalize after using the measured upright axis.
@@ -197,7 +219,7 @@ def analytic_franka_gripper_grasp(
 
     hand = np.eye(4, dtype=np.float64)
     hand[:3, :3] = rotation
-    hand[:3, 3] = key_center - hand_z * float(palm_to_key_center_m)
+    hand[:3, 3] = grasp_center - hand_z * float(palm_to_key_center_m)
     pregrasp = hand.copy()
     pregrasp[:3, 3] -= hand_z * float(pregrasp_clearance_m)
     key_hand = np.linalg.inv(key) @ hand
@@ -212,3 +234,45 @@ def analytic_franka_gripper_grasp(
         pregrasp_q=np.asarray([0.04, 0.04], dtype=np.float64),
         grasp_q=np.asarray([KEY_DIAMETER_M / 2.0] * 2, dtype=np.float64),
     )
+
+
+def analytic_franka_gripper_grasp_for_candidate(
+    T_robot_key: np.ndarray,
+    *,
+    table_normal_robot: np.ndarray,
+    identifier: tuple[str, str, str],
+    robot_base_position_robot: np.ndarray = np.zeros(3),
+) -> AnalyticGripperGrasp:
+    """Reconstruct one catalogued symmetry-equivalent analytic grasp.
+
+    Scene ``0`` is the upright/end-down tabletop class and uses eight radial
+    approaches. Scene ``1`` is the side-down class and uses the two wrist
+    orientations related by a 180-degree flip about the top-down approach.
+    The mapping is deterministic and shared by asset generation, live
+    planning and failed-attempt restoration.
+    """
+    if (not isinstance(identifier, tuple) or len(identifier) != 3 or
+            identifier[0] != "table" or
+            not identifier[1].isdigit() or not identifier[2].isdigit()):
+        raise ValueError("analytic gripper candidate needs table/scene/grasp ID")
+    scene_id = int(identifier[1])
+    variant = int(identifier[2])
+    grasp_class = classify_cylinder_tabletop(
+        T_robot_key, table_normal_robot=table_normal_robot)
+    expected_scene = {"end_down": 0, "side_down": 1}[grasp_class]
+    if scene_id != expected_scene:
+        raise ValueError("analytic gripper candidate differs from tabletop class")
+    if grasp_class == "end_down":
+        if not 0 <= variant < UPRIGHT_APPROACH_VARIANTS:
+            raise ValueError("upright gripper variant is outside the catalog")
+        return analytic_franka_gripper_grasp(
+            T_robot_key, table_normal_robot=table_normal_robot,
+            robot_base_position_robot=robot_base_position_robot,
+            approach_azimuth_rad=(2.0 * np.pi * variant /
+                                  UPRIGHT_APPROACH_VARIANTS))
+    if not 0 <= variant < SIDE_DOWN_WRIST_VARIANTS:
+        raise ValueError("side-down gripper variant is outside the catalog")
+    return analytic_franka_gripper_grasp(
+        T_robot_key, table_normal_robot=table_normal_robot,
+        robot_base_position_robot=robot_base_position_robot,
+        axis_sign=(1 if variant == 0 else -1))

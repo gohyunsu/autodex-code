@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
 DEMO = Path(__file__).resolve().parents[1]
@@ -11,7 +12,10 @@ if str(DEMO) not in sys.path:
     sys.path.insert(0, str(DEMO))
 
 from precision_insertion.analytic_gripper import (  # noqa: E402
-    analytic_franka_gripper_grasp, classify_cylinder_tabletop)
+    analytic_franka_gripper_grasp,
+    analytic_franka_gripper_grasp_for_candidate,
+    classify_cylinder_tabletop,
+)
 
 
 def _pose(rotation: np.ndarray, translation=(0.5, 0.1, 0.0)) -> np.ndarray:
@@ -28,6 +32,7 @@ def test_standing_key_uses_horizontal_side_grasp():
     assert result.tabletop_class == "end_down"
     assert abs(result.T_robot_hand[2, 2]) < 1e-9
     assert np.allclose(result.T_robot_hand[:3, 0], [0.0, 0.0, 1.0])
+    assert result.T_robot_hand[2, 3] == pytest.approx(0.055)
     assert np.allclose(result.pregrasp_q, [0.04, 0.04])
     assert np.allclose(result.grasp_q, [0.015, 0.015])
     assert np.allclose(key @ result.T_key_hand, result.T_robot_hand)
@@ -73,3 +78,38 @@ def test_nearest_class_assignment_has_no_unobservable_rejection_band():
                              [-np.sin(angle), 0.0, np.cos(angle)]])
     assert classify_cylinder_tabletop(
         _pose(rotation_y), table_normal_robot=[0.0, 0.0, 1.0]) == "side_down"
+
+
+def test_upright_candidate_ids_sample_eight_symmetry_equivalent_sides():
+    key = _pose(np.eye(3))
+    grasps = [analytic_franka_gripper_grasp_for_candidate(
+        key, table_normal_robot=np.asarray([0.0, 0.0, 1.0]),
+        identifier=("table", "0", f"{index:03d}"))
+        for index in range(8)]
+    approaches = np.asarray([grasp.T_robot_hand[:3, 2] for grasp in grasps])
+    assert np.allclose(approaches[:, 2], 0.0, atol=1e-9)
+    assert len({tuple(np.round(row, 8)) for row in approaches}) == 8
+    assert all(np.allclose(key @ grasp.T_key_hand, grasp.T_robot_hand)
+               for grasp in grasps)
+
+
+def test_side_down_candidate_ids_are_top_down_wrist_flips():
+    rotation = np.asarray([[0.0, 0.0, 1.0],
+                           [1.0, 0.0, 0.0],
+                           [0.0, 1.0, 0.0]])
+    key = _pose(rotation)
+    a, b = [analytic_franka_gripper_grasp_for_candidate(
+        key, table_normal_robot=np.asarray([0.0, 0.0, 1.0]),
+        identifier=("table", "1", f"{index:03d}"))
+        for index in range(2)]
+    assert np.allclose(a.T_robot_hand[:3, 2], [0.0, 0.0, -1.0])
+    assert np.allclose(a.T_robot_hand[:3, 2], b.T_robot_hand[:3, 2])
+    assert np.allclose(a.T_robot_hand[:3, 0], -b.T_robot_hand[:3, 0])
+    assert np.allclose(a.T_robot_hand[:3, 1], -b.T_robot_hand[:3, 1])
+
+
+def test_candidate_identifier_must_match_measured_tabletop_class():
+    with pytest.raises(ValueError, match="tabletop class"):
+        analytic_franka_gripper_grasp_for_candidate(
+            _pose(np.eye(3)), table_normal_robot=[0.0, 0.0, 1.0],
+            identifier=("table", "1", "000"))

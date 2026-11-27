@@ -46,7 +46,9 @@ Observed result:
 - board-free launch config resolved;
 - four capture4 cameras resolved;
 - the gap-5 Franka-gripper endpoint catalog loaded;
-- both cylinder tabletop pose stems (`000`, `001`) had one eligible candidate;
+- both cylinder tabletop pose stems were available with ten eligible
+  candidates: eight upright/end-down radial approaches in `000` and two
+  side-down top-down wrist flips in `001`;
 - MV-GoTrack endpoint resolved to `tcp://147.46.219.136:5591`;
 - capture4 manager and session directories passed configuration preflight;
 - all runtime paths were independent of the legacy AutoDex asset roots;
@@ -96,11 +98,11 @@ same-session key pose.
 
 The host is running `6.8.1-1061-realtime`, `enp4s0` is up with
 `172.16.1.10/24`, and the selected route to `172.16.1.11` uses that interface.
-The robot address nevertheless remains `INCOMPLETE` in the ARP table and two
-ICMP probes returned `Destination Host Unreachable`.  Local daemon ports 5555
-and 5556 are listening.  Therefore no current robot state or motion can be
-claimed until the robot-side power/cable/switch/IP/Desk path responds; no
-robot command was issued during this check.
+The latest read-only repeat resolved the robot at ARP and received an ICMP
+reply in 0.192 ms. Local daemon ports 5555 and 5556 were listening, but a
+state-only subscriber received no two advancing state packets within two
+seconds. Therefore network reachability is restored while an active
+daemon-to-FR3 state stream remains unverified; no robot command was issued.
 
 ## Evidence still required
 

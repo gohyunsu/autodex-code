@@ -20,8 +20,10 @@ import numpy as np
 
 from autodex.utils.conversion import cart2se3
 
-from .analytic_gripper import (analytic_franka_gripper_grasp,
-                               match_cylinder_tabletop_stem)
+from .analytic_gripper import (
+    analytic_franka_gripper_grasp_for_candidate,
+    match_cylinder_tabletop_stem,
+)
 from .assets import AssetPaths
 from .candidates import (planner_candidate_override, select_pose_candidates,
                          validate_catalog_session)
@@ -38,6 +40,7 @@ from .pose_selection import classify_key_tabletop_pose
 from .preflight import InsertionPreflight, plan_insertion_after_pickup
 from .repose_policy import assess_repose_options
 from .targets import build_rigid_insertion_targets
+from .table_surface import session_support_plane_robot
 from .timing_profile import timed
 from .world import build_trial_scene_from_session
 
@@ -377,18 +380,17 @@ def plan_fresh_key_trial(
     pose_robot = validate_se3(cart2se3(np.asarray(
         scene["mesh"]["target"]["pose"], dtype=float)),
         name="fresh trial T_robot_key")
-    analytic_grasp = None
+    support_normal_robot = None
     with timed("planning.pose_classification", phase="planning"):
         if spec.name == "franka_gripper":
             if mode.family != "cylinder":
                 raise ValueError(
                     "the deterministic Franka-gripper runtime currently "
                     "supports the cylindrical key mode")
+            support_normal_robot, _ = session_support_plane_robot(calibration)
             pose_class = match_cylinder_tabletop_stem(
                 pose_robot, tabletop_dir=AssetPaths(root, mode).key_tabletop_dir,
-                table_normal_robot=np.asarray([0.0, 0.0, 1.0]))
-            analytic_grasp = analytic_franka_gripper_grasp(
-                pose_robot, table_normal_robot=np.asarray([0.0, 0.0, 1.0]))
+                table_normal_robot=support_normal_robot)
         else:
             pose_class = classify_key_tabletop_pose(
                 mode=mode, shared_root=root, pose_robot_key=pose_robot,
@@ -463,7 +465,13 @@ def plan_fresh_key_trial(
             candidate_id = "/".join(key)
             with timed("planning.candidate_load", phase="planning", kind="io",
                        candidate_id=candidate_id):
-                if analytic_grasp is not None:
+                analytic_grasp = None
+                if spec.name == "franka_gripper":
+                    assert support_normal_robot is not None
+                    analytic_grasp = analytic_franka_gripper_grasp_for_candidate(
+                        pose_robot,
+                        table_normal_robot=support_normal_robot,
+                        identifier=key)
                     override = analytic_grasp.candidate_override(identifier=key)
                 else:
                     override = planner_candidate_override(
