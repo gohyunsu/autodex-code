@@ -226,11 +226,16 @@ def _capture_admitted_key(
                     silhouette_loss_threshold=silhouette_loss_threshold)
             break
         except ValueError as exc:
-            if not pose_only or "too few key views remain" not in str(exc):
+            message = str(exc)
+            insufficient_key_views = (
+                "too few key views remain" in message or
+                ("socket capture key_" in message and
+                 "accepted views <" in message))
+            if not pose_only or not insufficient_key_views:
                 raise
             write_failed_key_pose_capture(
                 capture, output.parent / f"{output.name}_admission_{attempt + 1}",
-                str(exc))
+                message)
             if attempt + 1 == len(prompts):
                 raise
     if observation.phase != "tabletop":

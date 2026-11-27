@@ -272,7 +272,13 @@ def test_initial_visual_capture_overlaps_key_candidate_planning(
         "save_visual_done")
 
 
-def test_pose_only_key_capture_retries_socket_mask_as_key(tmp_path, monkeypatch):
+@pytest.mark.parametrize("first_failure", [
+    "too few key views remain after fixed-socket mask exclusion",
+    ("socket capture key_001: 0 accepted views < 1; per-view reasons: "
+     "{'cam_a': ['mask_too_small', 'missing_foundpose_pose']}"),
+])
+def test_pose_only_key_capture_retries_socket_mask_as_key(
+        tmp_path, monkeypatch, first_failure):
     arguments, events, _ = _setup(tmp_path, monkeypatch)
     prompts = []
     failed = []
@@ -284,8 +290,7 @@ def test_pose_only_key_capture_retries_socket_mask_as_key(tmp_path, monkeypatch)
     original_admit = trial.admit_key_capture
     def admit(**kwargs):
         if len(prompts) == 1:
-            raise ValueError(
-                "too few key views remain after fixed-socket mask exclusion")
+            raise ValueError(first_failure)
         return original_admit(**kwargs)
     # _setup's admission stub expects no actual SAM/FoundPose data.
     monkeypatch.setattr(trial, "collect_key_capture", collect)
@@ -315,7 +320,7 @@ def test_pose_only_key_capture_retries_socket_mask_as_key(tmp_path, monkeypatch)
     assert prompts == ["white precision key, excluding white socket",
                        "small white solid peg"]
     assert len(failed) == 1
-    assert "fixed-socket mask exclusion" in failed[0][1]
+    assert failed[0][1] == first_failure
 
 
 def test_reset_landing_reuses_same_camera_key_capture_without_grasp_preflight(
