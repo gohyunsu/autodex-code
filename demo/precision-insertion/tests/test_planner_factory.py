@@ -70,7 +70,7 @@ def test_offline_gripper_planner_binds_checkout_content(tmp_path, monkeypatch):
 
 def test_robotiq_uses_complete_catalog_sized_batch(monkeypatch):
     monkeypatch.setenv("PRECISION_END_EFFECTOR", "robotiq_2f85")
-    assert selected_fr3_planner_config_options()["candidate_batch_size"] == 8
+    assert selected_fr3_planner_config_options()["candidate_batch_size"] == 1
 
 
 def test_inspire_preserves_stock_candidate_batch(monkeypatch):

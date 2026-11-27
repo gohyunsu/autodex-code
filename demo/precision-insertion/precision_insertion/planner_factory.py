@@ -39,10 +39,11 @@ def selected_fr3_planner_config_options(
         "external_robot_configs_path": str(config_root),
         "external_asset_path": str(_CUROBO_CONTENT / "assets"),
         "use_hand_planner_defaults": True,
-        # The full commissioned Robotiq catalog contains at most eight
-        # candidates for one tabletop pose.  This keeps all of them while
-        # avoiding AutoDex's otherwise unused 50-pose IK padding.
-        **({"candidate_batch_size": 8}
+        # Process the small commissioned Robotiq catalog one candidate at a
+        # time. All candidates are still visited through the existing chunk
+        # loop, while each 32-seed IK graph avoids unused pose padding and
+        # leaves VRAM for the subsequent motion graph.
+        **({"candidate_batch_size": 1}
            if selected.name == "robotiq_2f85" else {}),
     }
 
