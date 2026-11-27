@@ -7,7 +7,8 @@ timing contracts remain in [`OPERATIONS.md`](OPERATIONS.md),
 Historical dated reports are evidence, not current run instructions.
 
 Last audited: **2026-11-27** on kds-Z790. The current live branch is
-`feat/zerodex-precision-insertion-robotiq` at commit `62ef455`. Capture4
+`feat/zerodex-precision-insertion-robotiq`; the paired released-outcome VLM
+path is present from commit `1f11a75` onward. Capture4
 perception services and the Robotiq state service were reached read-only; no
 robot motion was issued during this audit.
 
@@ -28,7 +29,7 @@ robot motion was issued during this audit.
 | Distributed visual inference | `mvgotrack_axis_alignment_capture4_remote_qwen.env.sh` keeps MV-GoTrack and one four-camera persistent Qwen worker on capture4. Camera IDs share one model and same-host batch path; kds retains cuRobo, the state machine and Franka control. The deployment is isolated under `/home/capture4/precision_insertion_qwen` and does not modify shared capture services or Conda environments. |
 | Insertion execution | The corrected hold is replanned along the measured socket axis. If the corrected 20 mm endpoint/path is unavailable, the profile tries the configured 10 mm axial fallback. |
 | Failed-attempt recovery | A released insertion failure first reuses its saved pre-insertion image for next-attempt XY advice, then perceives and restores the released key to the original tabletop pose. Model, saved-input or advice-validation errors are recorded as unavailable diagnostics and cannot suppress that recovery. |
-| Labels | Manual collection stores the independent Qwen result too. Grasp, pre-insertion arrival, descent-time tip entry and released-key `inside_socket` outcome remain separate fields. |
+| Labels | Manual collection stores the independent Qwen result too. For each camera the released-outcome model receives the saved initial raw key crop followed by the final clear-view socket crop; no CAD overlay is shown to the model. Grasp, pre-insertion arrival, descent-time tip entry and released-key `inside_socket` outcome remain separate fields. |
 | Storage | Runtime JSON and environment variables resolve NAS paths only below `/mnt/paradex2/hyunsu/precision_insertion`; repeated-use model caches and source checkout remain local. Capture4 acquisition is the documented external ParaDex exception. |
 | Timing | Nested spans cover startup, perception, planning, motion, camera, VLM, evidence writes, human waits and cleanup. Overlap-aware occupied time prevents parallel PNG writes from being counted as serial latency. Rejected grasp candidates retain their cuRobo stage, failure stage and timing records instead of reducing the result to only `transfer_unreachable`. |
 
@@ -99,16 +100,17 @@ robot motion was issued during this audit.
   `precision_calib_v1:26053248,25322639,25305462,25322642:7d412a3ae834d0e7b53f9cfd4576fe1e4b63f409d95ec4e9ecede07322384f70:a43905fc73e2186548b70a7402ad84eb7bf14eed7a261a37a192605c5bf95a4d`.
   The focused calibration/track tests passed 15/15, and the active board-free
   gripper/MV-GoTrack/Qwen profile passed static preflight.
-- The source-boundary audit run from a clean shared clone of commit
-  `b76ad347ad266f3ae05c19abe0f6f16d4f29913c` reports zero stock-entrypoint
-  changes and zero unexpected shared-runtime changes. This avoids treating
-  unrelated calibration work in the development checkout as part of the
-  precision runtime.
+- The source-boundary audit at the current branch head reports zero
+  stock-entrypoint changes and zero unexpected shared-runtime changes. The
+  reviewed adapter contract now explicitly includes the official Robotiq
+  visual and collision meshes used by its selected URDF; the stock AutoDex
+  entry points remain unchanged.
 - The current worktree passed the complete demo suite with
-  **1629 passed, 4 skipped**. This includes regression coverage for the ten
+  **1655 passed, 4 skipped**. This includes regression coverage for the ten
   deterministic gripper candidates and for retaining the measured board-free
   support-plane tilt in key conditioning, tabletop classification, grasp
-  construction and failed-attempt restoration.
+  construction and failed-attempt restoration, plus same-camera paired
+  initial-key/final-socket Qwen requests and replay verification.
 - A real local-CUDA synthetic gripper diagnostic now preserves the FR3
   profile's 32 trajectory-optimization seeds even though the ZeroDex planner
   binds explicit checkout-local robot YAML paths. The former generic

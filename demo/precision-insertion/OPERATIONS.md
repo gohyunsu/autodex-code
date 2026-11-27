@@ -55,7 +55,7 @@ python3 demo/precision-insertion/audit_source_boundary.py
 
 The robot may remain off for the first two checks.
 
-The ZeroDex profile defaults to `PRECISION_END_EFFECTOR=franka_gripper`.
+The ZeroDex profile defaults to `PRECISION_END_EFFECTOR=robotiq_2f85`.
 Set `PRECISION_END_EFFECTOR=inspire` on the same command to retain the original
 Inspire/BODex route.  These modes have separate URDFs, joint widths and
 candidate namespaces; selecting one never deletes or rewrites the other.
@@ -169,9 +169,11 @@ cameras and the current 5 mm straight-mount candidate policy.
    corrected 20 mm path cannot be planned.
 9. Execute the axial descent, record the human `tip_entry_success` diagnostic,
    open the hand, withdraw along the planned path and return to clear view.
-10. Capture the released final state. Store the visual/VLM task label; success
-    ends the session. Failure performs the existing key-return/repose flow and
-    preserves the observed correction for the next trial.
+10. Capture the released final state. For each camera, submit its saved raw
+    initial-key crop followed by its final clear-view socket crop to Qwen; no
+    CAD overlay is part of this label input. Store the visual/VLM task label;
+    success ends the session. Failure performs the existing key-return/repose
+    flow and preserves the observed correction for the next trial.
 
 No extra key-in-hand threshold, fixed camera blacklist or cumulative XY cap is
 added by this profile. Existing geometry collision checks, exact endpoint
