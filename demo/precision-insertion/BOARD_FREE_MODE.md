@@ -1,20 +1,22 @@
 # Board-free cylinder session
 
-`PRECISION_SCENE_MODE=board_free` is a separate scene setup for the cylinder
-pipeline. The ChArUco board is physically absent. The socket rests directly
+`PRECISION_SCENE_MODE=board_free` is the default ZeroDex cylinder setup. The
+ChArUco board is physically absent during an episode. The socket rests directly
 on the working surface, and the key stays out of view until the socket capture
 has completed. The session does **not** capture or fit a board, does not save
 board images, and does not use a board footprint for repose. It retains the
-same camera intrinsics/extrinsics and saved hand-eye `C2R` as the normal
-pipeline, then measures a **new** socket pose from live SAM/FoundPose views
-using stock multi-view silhouette refinement (`ignore_sil_loss`). It never
-reuses the old board-supported socket position.
+commissioned camera intrinsics/extrinsics and hand-eye `C2R`, loads the frozen
+support plane from `PRECISION_TABLE_PLANE_CONFIG`, and measures a **new** socket
+pose from live SAM masks with the table-constrained metric socket body fit. It
+never reuses an old socket position and does not require socket FoundPose.
 
-The operator must supply `PRECISION_TABLE_SURFACE_Z_M` in metres in the FR3
-base frame. This is the physical surface supporting the socket and key after
-the board has been removed. Static `--check` verifies the file and numeric
-contract only; it cannot establish that physical height. Do not substitute
-the old board's top height automatically. For a camera-only/static example:
+The kds-Z790 machine profile points `PRECISION_TABLE_PLANE_CONFIG` at
+`~/precision_insertion_project/calibration/table_plane/current/table_plane.json`.
+That plane was measured once while a temporary ChArUco board made the physical
+surface observable; the board is not a runtime dependency. An explicit
+`PRECISION_TABLE_SURFACE_Z_M` remains a fallback for installations without a
+saved plane. Static `--check` validates the file and coordinate contract only;
+it does not remeasure the surface. For a camera-only/static example:
 
 The command also needs an active recipient stage at `PRECISION_STAGE_ROOT`.
 The former stage was moved under `hyunsu/tmp/20261023_prev` on this PC; its
@@ -26,14 +28,16 @@ cd /home/robot/autodex-precision-insertion
 PRECISION_STAGE_ROOT=/absolute/path/to/active/AutoDex/precision_insertion/cylindrical \
 PRECISION_SCENE_MODE=board_free \
 PRECISION_GAP_MM=10 \
-PRECISION_TABLE_SURFACE_Z_M=0.040 \
+PRECISION_TABLE_PLANE_CONFIG=/absolute/path/to/table_plane.json \
 bash demo/precision-insertion/run_robot_pc.sh --check
 ```
 
-Here `0.040` m is AutoDex's nominal tabletop default, **not a measurement of
-the board-free setup**. Before any robot run, measure or otherwise verify the
-actual support height and set that value instead. The camera calibration and
-hand-eye transform also require the physical rig to be unchanged.
+The camera calibration, hand-eye transform and saved plane require the physical
+rig/table to be unchanged. A key observation uses the same plane: raw
+FoundPose selects the cylinder tabletop geometry, while the metric key mesh
+and SAM masks recover support-normal depth and support-plane XY. Thus the
+planner and MV-GoTrack receive a board-free, support-constrained 6D key pose
+rather than the raw single-view silhouette translation.
 
 The last saved 10 mm board-9 session, run `20261022_105828_126084`, recorded:
 

@@ -95,6 +95,29 @@ def _session(root, mode, *, socket_x=0.4):
     ]
     mesh.write_text("".join(f"v {x} {y} {z}\n" for x, y, z in vertices),
                     encoding="utf-8")
+    if mode.family == "cylinder":
+        info = (root / "object_processing" / mode.key_object /
+                "processed_data" / "info")
+        tabletop = info / "tabletop"
+        tabletop.mkdir(parents=True, exist_ok=True)
+        (info / "symmetry.json").write_text(json.dumps({
+            "type": "Dinf", "center": [0, 0, 0.04],
+            "axes": [{"axis": [0, 0, 1], "fold": "inf"},
+                     {"axis": [1, 0, 0], "fold": 2}],
+        }), encoding="utf-8")
+        end_down = np.diag([1., -1., -1., 1.])
+        end_down[2, 3] = 0.08
+        side_down = np.array([[0., 0., 1., 0.], [0., 1., 0., 0.],
+                              [-1., 0., 0., 0.015], [0., 0., 0., 1.]])
+        np.save(tabletop / "000.npy", end_down)
+        np.save(tabletop / "001.npy", side_down)
+        key_mesh = (root / "object_processing" / mode.key_object /
+                    "raw_mesh" / f"{mode.key_object}.obj")
+        key_mesh.parent.mkdir(parents=True, exist_ok=True)
+        angles = np.linspace(0, 2 * np.pi, 32, endpoint=False)
+        key_mesh.write_text("".join(
+            f"v {0.015 * np.cos(a)} {0.015 * np.sin(a)} {z}\n"
+            for z in (0., 0.08) for a in angles), encoding="utf-8")
     pose = np.eye(4)
     world = add_fixed_mesh_fixtures(
         {"mesh": {}, "cuboid": {}},
@@ -123,7 +146,8 @@ def _session(root, mode, *, socket_x=0.4):
         camera_snapshot, sort_keys=True, separators=(",", ":"),
         allow_nan=False).encode("utf-8")).hexdigest()
     assert world["mesh"]["fixture_socket"]["pose"] == se32cart(pose).tolist()
-    return SessionCalibration({}, pose, {}, world, record)
+    support = {"source": "configured_table_surface", "table_surface_z_m": 0.0}
+    return SessionCalibration(support, pose, {}, world, record)
 
 
 def _admit(capture, mode, root, selector, *, socket_x=0.4):
@@ -140,38 +164,13 @@ def _admit(capture, mode, root, selector, *, socket_x=0.4):
         minimum_refinement_iou=0.5)
 
 
-@pytest.mark.parametrize("board_iou,expected_method,expected_calls", [
-    (0.9, "board_constrained_key_body", 1),
-    (0.2, "AutoDex_refine_from_payloads_iou", 2),
-])
-def test_cylinder_tabletop_compares_board_body_with_stock_iou(
-        tmp_path, monkeypatch, board_iou, expected_method, expected_calls):
-    from precision_insertion import board_socket_fit
-
+def test_cylinder_tabletop_uses_support_constrained_mesh_fit(tmp_path):
     mode = select_mode("cylinder", 10)
     raw_pose = np.eye(4)
+    raw_pose[2, 3] = 0.25
     capture = _capture({camera: raw_pose for camera in CAMERAS}, tmp_path)
     selector = SelectorStub(mode.key_object)
     session = _session(tmp_path, mode)
-    session = replace(session, board={"T_robot_board": np.eye(4).tolist()})
-    symmetry = (tmp_path / "object_processing" / mode.key_object /
-                "processed_data" / "info" / "symmetry.json")
-    symmetry.parent.mkdir(parents=True, exist_ok=True)
-    symmetry.write_text(json.dumps({
-        "type": "Dinf", "center": [0, 0, 0.04],
-        "axes": [{"axis": [0, 0, 1], "fold": "inf"},
-                 {"axis": [1, 0, 0], "fold": 2}]}))
-    fitted = np.eye(4)
-    fitted[0, 3] = 0.1
-
-    def board_fit(**kwargs):
-        assert set(kwargs["masks"]) == set(CAMERAS)
-        assert np.allclose(kwargs["board_pose_robot"], np.eye(4))
-        return fitted, {"mean_body_iou": board_iou,
-                        "per_view_iou": {camera: board_iou
-                                         for camera in CAMERAS}}
-
-    monkeypatch.setattr(board_socket_fit, "fit_board_socket_body", board_fit)
     observation = admit_key_capture(
         capture=capture, init_orchestrator=selector, mode=mode,
         shared_root=tmp_path, calibration=session,
@@ -182,16 +181,16 @@ def test_cylinder_tabletop_compares_board_body_with_stock_iou(
         maximum_socket_mask_overlap_fraction=0.1,
         socket_projection_dilation_px=0,
         minimum_refinement_iou=0.5)
-    assert observation.selection["method"] == expected_method
-    assert selector.calls == expected_calls
-    assert observation.pose_world[0, 3] == pytest.approx(
-        0.1 if board_iou == 0.9 else 0.0)
+    assert observation.selection["method"] == "support_constrained_key_body"
+    assert selector.calls == 1
+    assert observation.selection["tabletop_axis_layout"] == "upright"
+    assert observation.selection["support_body_fit"]["camera_ids"] == [
+        "cam_a", "cam_b"]
+    # End-down local z runs from the top toward the table.
+    assert observation.pose_world[2, 3] == pytest.approx(0.08)
 
 
-def test_side_down_cylinder_uses_stock_pose_and_measured_board_support(
-        tmp_path, monkeypatch):
-    from precision_insertion import board_socket_fit
-
+def test_side_down_cylinder_uses_measured_board_support(tmp_path):
     mode = select_mode("cylinder", 10)
     raw_pose = np.eye(4)
     raw_pose[:3, :3] = np.array([[0., 0., 1.],
@@ -215,13 +214,6 @@ def test_side_down_cylinder_uses_stock_pose_and_measured_board_support(
     mesh.write_text("".join(
         f"v {x} {y} {z}\n" for x in (-0.015, 0.015)
         for y in (-0.015, 0.015) for z in (0., 0.08)))
-    # The upright hypothesis is evaluated even for a raw side-down pose,
-    # but a poor mask fit must leave the lying-key pose unchanged.
-    monkeypatch.setattr(board_socket_fit, "fit_board_socket_body",
-                        lambda **_: (np.eye(4), {
-                            "mean_body_iou": 0.2,
-                            "per_view_iou": {camera: 0.2 for camera in CAMERAS},
-                        }))
     observation = admit_key_capture(
         capture=capture, init_orchestrator=SelectorStub(mode.key_object),
         mode=mode, shared_root=tmp_path, calibration=session,
@@ -232,10 +224,11 @@ def test_side_down_cylinder_uses_stock_pose_and_measured_board_support(
         maximum_socket_mask_overlap_fraction=0.1,
         socket_projection_dilation_px=0,
         minimum_refinement_iou=0.5)
-    assert observation.selection["method"] == "AutoDex_refine_from_payloads_iou"
+    assert observation.selection["method"] == "support_constrained_key_body"
     assert observation.selection["tabletop_axis_layout"] == "side_down"
-    assert observation.selection["support_surface_offset_m"] == pytest.approx(0.005)
-    assert observation.selection["board_support_offset_m"] == pytest.approx(0.005)
+    assert observation.selection["tabletop_axis_layout_source"] == (
+        "foundpose_axis_class")
+    assert observation.selection["board_support_offset_m"] is not None
     assert observation.pose_world[2, 3] == pytest.approx(0.015)
 
 
@@ -274,17 +267,14 @@ def test_side_down_cylinder_uses_board_free_table_plane(tmp_path):
         socket_projection_dilation_px=0,
         minimum_refinement_iou=0.5)
 
-    assert observation.selection["method"] == "AutoDex_refine_from_payloads_iou"
+    assert observation.selection["method"] == "support_constrained_key_body"
     assert observation.selection["tabletop_axis_layout"] == "side_down"
-    assert observation.selection["support_surface_offset_m"] == pytest.approx(0.025)
     assert observation.selection["board_support_offset_m"] is None
     assert observation.pose_world[2, 3] == pytest.approx(0.035)
 
 
-def test_raw_side_down_cylinder_can_select_board_supported_upright_pose(
+def test_explicit_end_down_override_controls_support_fit_class(
         tmp_path, monkeypatch):
-    from precision_insertion import board_socket_fit
-
     mode = select_mode("cylinder", 10)
     raw_pose = np.eye(4)
     raw_pose[:3, :3] = np.array([[0., 0., 1.],
@@ -300,13 +290,7 @@ def test_raw_side_down_cylinder_can_select_board_supported_upright_pose(
         "type": "Dinf", "center": [0, 0, 0.04],
         "axes": [{"axis": [0, 0, 1], "fold": "inf"},
                  {"axis": [1, 0, 0], "fold": 2}]}))
-    fitted = np.eye(4)
-    fitted[0, 3] = 0.1
-    monkeypatch.setattr(board_socket_fit, "fit_board_socket_body",
-                        lambda **_: (fitted, {
-                            "mean_body_iou": 0.9,
-                            "per_view_iou": {camera: 0.9 for camera in CAMERAS},
-                        }))
+    monkeypatch.setenv("PRECISION_KEY_TABLETOP_OVERRIDE", "end_down")
     observation = admit_key_capture(
         capture=capture, init_orchestrator=SelectorStub(mode.key_object),
         mode=mode, shared_root=tmp_path, calibration=session,
@@ -317,10 +301,12 @@ def test_raw_side_down_cylinder_can_select_board_supported_upright_pose(
         maximum_socket_mask_overlap_fraction=0.1,
         socket_projection_dilation_px=0,
         minimum_refinement_iou=0.5)
-    assert observation.selection["method"] == "board_constrained_key_body"
+    assert observation.selection["method"] == "support_constrained_key_body"
     assert observation.selection["tabletop_axis_layout"] == "upright"
     assert observation.selection["stock_axis_layout"] == "side_down"
-    assert observation.pose_world[0, 3] == pytest.approx(0.1)
+    assert observation.selection["tabletop_axis_layout_source"] == (
+        "explicit_tabletop_override")
+    assert observation.pose_world[2, 3] == pytest.approx(0.08)
 
 
 def test_square_key_uses_agreeing_iou_selected_pose_and_full_capture_interval(
@@ -458,13 +444,15 @@ def test_tabletop_cylinder_uses_stock_iou_ranking_without_extra_floor(
         np.eye(4), {"best_serial": "cam_a", "best_iou": 0.2,
                     "sil_loss": 0.0001})
     admitted = _admit(capture, mode, tmp_path, selector)
-    assert admitted.selection["best_iou"] == 0.2
+    assert admitted.selection["stock_initial_iou"] == 0.2
+    assert 0 <= admitted.selection["best_iou"] <= 1
     assert admitted.selection["minimum_refinement_iou_gate_applied"] is False
     selector.refine_from_payloads = lambda *_args, **_kwargs: (
         np.eye(4), {"best_serial": "cam_a", "best_iou": None,
                     "sil_loss": 0.0001})
-    with pytest.raises(ValueError, match="invalid score"):
-        _admit(capture, mode, tmp_path, selector)
+    admitted = _admit(capture, mode, tmp_path, selector)
+    assert admitted.selection["stock_initial_iou"] is None
+    assert 0 <= admitted.selection["best_iou"] <= 1
 
 
 def test_rejects_mismatched_pixels_or_disagreeing_square_key_pose(tmp_path):

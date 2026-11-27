@@ -69,6 +69,28 @@ class _GripperRobot(_Robot):
         return pose
 
 
+class _RobotiqRobot(_Robot):
+    def __init__(self):
+        self.actuated_joints = [SimpleNamespace(name=f"fr3_joint{i}")
+                                for i in range(7)] + [
+            SimpleNamespace(name="robotiq_85_left_knuckle_joint")]
+        self.base_link = "fr3_link0"
+        self.scene = trimesh.Scene()
+        self.scene.add_geometry(trimesh.creation.box((0.1, 0.1, 0.1)),
+                                geom_name="fr3_link0_visual")
+        self.scene.add_geometry(trimesh.creation.box((0.04, 0.04, 0.04)),
+                                geom_name="robotiq_base.dae")
+        self.scene.add_geometry(trimesh.creation.box((0.01, 0.01, 0.03)),
+                                geom_name="left_finger_tip.dae")
+        self.cfg = None
+
+    def get_transform(self, from_link, to_link):
+        assert from_link == "robotiq_85_base_link" and to_link == self.base_link
+        pose = np.eye(4)
+        pose[0, 3] = 0.12
+        return pose
+
+
 def _prediction(tmp_path):
     mode = select_mode("square", 1.5)
     for name in (mode.key_object, mode.socket_object):
@@ -111,6 +133,25 @@ def test_franka_gripper_overlay_uses_nine_dof_hand_frame(tmp_path, monkeypatch):
     assert "hand.dae" in prediction.names
     assert "finger.dae" in prediction.names
     assert prediction.T_robot_hand[0, 3] == pytest.approx(0.1)
+
+
+def test_robotiq_overlay_uses_mount_base_frame(tmp_path, monkeypatch):
+    monkeypatch.setenv("PRECISION_END_EFFECTOR", "robotiq_2f85")
+    mode = select_mode("cylinder", 5.0)
+    for name in (mode.key_object, mode.socket_object):
+        path = tmp_path / "object_processing" / name / "raw_mesh" / f"{name}.obj"
+        path.parent.mkdir(parents=True)
+        trimesh.creation.box((0.02, 0.02, 0.05)).export(path)
+    prediction = build_held_scene_prediction(
+        shared_root=tmp_path, mode=mode,
+        full_q_measured=np.r_[np.zeros(7), [0.4]],
+        T_robot_socket_frozen=np.eye(4),
+        T_key_hand_hypothesis=np.eye(4),
+        relation_source="v8_nominal_diagnostic",
+        robot_loader=lambda _path: _RobotiqRobot())
+    assert "robotiq_base.dae" in prediction.names
+    assert "left_finger_tip.dae" in prediction.names
+    assert prediction.T_robot_hand[0, 3] == pytest.approx(0.12)
 
 
 def test_existing_depth_renderer_adapter_keeps_raw_pixels_and_colors_objects(tmp_path):

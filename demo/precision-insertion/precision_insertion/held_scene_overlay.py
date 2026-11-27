@@ -151,7 +151,11 @@ def build_raw_held_scene_comparison(
         raise ValueError(
             f"raw held scene needs the FR3/{spec.name} joint model")
     robot.update_cfg(dict(zip(joints, q)))
-    hand_link = "base_link" if spec.name == "inspire" else "fr3_hand"
+    hand_link = {
+        "inspire": "base_link",
+        "franka_gripper": "fr3_hand",
+        "robotiq_2f85": "robotiq_85_base_link",
+    }[spec.name]
     hand = validate_se3(robot.get_transform(hand_link, robot.base_link),
                         name="measured-joint URDF hand FK")
     key = validate_se3(hand @ np.linalg.inv(T_key_hand),
@@ -227,7 +231,11 @@ def build_held_scene_prediction(
         raise ValueError(
             f"overlay URDF is not the FR3/{spec.name} joint model")
     robot.update_cfg(dict(zip(joints, q)))
-    hand_link = "base_link" if spec.name == "inspire" else "fr3_hand"
+    hand_link = {
+        "inspire": "base_link",
+        "franka_gripper": "fr3_hand",
+        "robotiq_2f85": "robotiq_85_base_link",
+    }[spec.name]
     hand = validate_se3(robot.get_transform(hand_link, robot.base_link),
                         name="measured-joint URDF hand FK")
     key = validate_se3(hand @ np.linalg.inv(T_key_hand),
@@ -246,11 +254,15 @@ def build_held_scene_prediction(
         meshes.append(scene.geometry[name])
         poses.append(_visual_affine(transform, name=f"URDF visual {name}"))
         labels[name] = _finger_label(name)
-    has_end_effector = (
-        any(name.startswith("right_") for name in names)
-        if spec.name == "inspire" else
-        (any("hand.dae" in name for name in names) and
-         any("finger.dae" in name for name in names)))
+    if spec.name == "inspire":
+        has_end_effector = any(name.startswith("right_") for name in names)
+    elif spec.name == "franka_gripper":
+        has_end_effector = (any("hand.dae" in name for name in names) and
+                            any("finger.dae" in name for name in names))
+    else:
+        has_end_effector = (
+            any("robotiq_base.dae" in name for name in names) and
+            any("finger_tip.dae" in name for name in names))
     if not names or not has_end_effector:
         raise ValueError(
             f"full Franka and {spec.name} visual meshes are required")

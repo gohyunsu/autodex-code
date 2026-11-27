@@ -7,8 +7,14 @@ selection, cuRobo motion, 20 mm insertion, release/clear-view and the final VLM
 label. `--xy-estimator mvgotrack` replaces only the held-key pose observation
 used at pre-insertion.
 
-1. The normal SAM3 + FoundPose tabletop observation produces `T_world_key`.
-2. After the same observation passes v8 grasp preflight, it is sent to
+1. The normal SAM3 + FoundPose tabletop observation identifies the key and
+   supplies its raw pose/tabletop-axis evidence. For the metric cylinder, the
+   runtime then resolves the otherwise ambiguous camera-ray depth by placing
+   the complete key mesh on the frozen support plane and fitting its two
+   tangential coordinates to all admitted SAM masks. The result is the
+   support-constrained `T_world_key` used by the rest of the run.
+2. After the same support-constrained observation passes v8 grasp preflight,
+   it is sent to
    MV-GoTrack as the initial pose. This happens before pickup.
 3. capture4 tracks the key through pickup, lift, transfer and pre-insertion.
 4. At a stopped pre-insertion hold, the main PC consumes a tracker message
@@ -24,6 +30,13 @@ used at pre-insertion.
    No extra still image or Qwen call is made for this reobservation.
 8. The existing Jacobian socket-axis handoff, guarded 20 mm insertion,
    release/clear-view and VLM success label are unchanged.
+
+The tabletop support fit is a pose recovery step, not a new pass/fail gate.
+It handles both the `000` end-down and `001` side-down cylinder classes. The
+known metric mesh supplies support contact; axial yaw and equivalent ends are
+reduced by D∞ symmetry. Raw FoundPose pose, raw class, per-view fitted XY,
+mask-hull IoU and the resulting robot-frame centre correction are retained in
+the observation record for diagnosis.
 
 The integration does **not** add score, age, workspace, inter-frame jump or
 task-success thresholds. The capture4 launcher explicitly sets the optional
@@ -57,9 +70,15 @@ Validated on 2026-11-26:
   `f7d127abe2b8e37b1322a19115343286a6560700c6e02fc6080b4e2426a01086`;
 - read-only streamer `/cameras` smoke test returned all four serials.
 
-The live tracker was not initialized against a physical key during this setup,
-because an accepted same-session FoundPose initializer was not available. That
-is the remaining hardware validation, not a missing code path.
+The live tracker has since been initialized from a physical-key observation on
+capture4 and produced its first native-valid pose before pickup. A 2026-11-27
+run also exposed why the initializer must be support-constrained: a valid SAM
+mask and single-view raw FoundPose silhouette required a
+`[-58.0, -10.7, -63.5]` mm robot-frame centre correction to coincide with the
+visible tabletop key. Replaying the exact mask with the support fit produced
+mask-hull IoU `0.953`; that corrected pose passed the stock Robotiq pickup, lift,
+transfer and sampled 20 mm insertion preflight. Physical execution of the
+corrected run remains separate evidence from this planning result.
 
 The companion Qwen deployment is independently namespaced at
 `/home/capture4/precision_insertion_qwen`. All four camera IDs share one model
@@ -148,6 +167,9 @@ the 20 mm insertion target.
 
 - `mvgotrack/init_<capture_id>/initialization.json`: accepted FoundPose source,
   pose/frame contract and endpoint;
+- `key_captures/<capture_id>/key_observation.json`:
+  `selection.support_body_fit` records the support-constrained pose derivation,
+  raw pose, per-view XY/IoU and robot-frame centre correction;
 - `mvgotrack/init_<capture_id>/first_pose.json`: first native-valid tracked
   pose after start/reinit;
 - `attempts/<id>/same_trial_xy/observations/*.json`: each symmetry-reduced tip,

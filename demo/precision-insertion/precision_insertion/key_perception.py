@@ -38,7 +38,7 @@ from .socket_exclusion import (
     key_mask_socket_overlap_fraction, project_frozen_socket_exclusion,
 )
 from .symmetry import load_axial_symmetry
-from .table_surface import session_support_plane_robot
+from .table_surface import session_support_plane_robot, support_frame_from_plane
 
 
 def _effective_key_view_limits(limits: SocketViewLimits) -> SocketViewLimits:
@@ -194,6 +194,102 @@ def _support_side_down_key_on_table(
     offset = float(plane_offset - np.min(transformed @ up))
     robot_pose[:3, 3] += offset * up
     return validate_se3(c2r @ robot_pose), offset
+
+
+def _axis_rotation(axis: np.ndarray, angle: float) -> np.ndarray:
+    axis = np.asarray(axis, dtype=np.float64)
+    axis /= np.linalg.norm(axis)
+    skew = np.array([[0., -axis[2], axis[1]],
+                     [axis[2], 0., -axis[0]],
+                     [-axis[1], axis[0], 0.]])
+    return (np.eye(3) + np.sin(angle) * skew
+            + (1. - np.cos(angle)) * (skew @ skew))
+
+
+def _requested_tabletop_layout(inferred: str) -> tuple[str, str]:
+    """Return the geometric tabletop class and its provenance.
+
+    The override is an explicit experiment input used when the operator has
+    placed the cylinder in a known class.  It changes no position and adds no
+    acceptance gate.
+    """
+    override = os.environ.get("PRECISION_KEY_TABLETOP_OVERRIDE", "").strip()
+    if not override:
+        return inferred, "foundpose_axis_class"
+    layouts = {"end_down": "upright", "side_down": "side_down"}
+    if override not in layouts:
+        raise ValueError(
+            "PRECISION_KEY_TABLETOP_OVERRIDE must be end_down or side_down")
+    return layouts[override], "explicit_tabletop_override"
+
+
+def _support_constrained_tabletop_key(
+    pose_world: np.ndarray, *, tabletop_layout: str,
+    masks: dict[str, np.ndarray], intrinsics_undist: dict[str, np.ndarray],
+    extrinsics_camera_world: dict[str, np.ndarray], calibration,
+    shared_root: Path, mode: TaskMode,
+) -> tuple[np.ndarray, dict]:
+    """Recover tabletop cylinder depth from mask rays and the frozen plane."""
+    from .board_socket_fit import fit_support_surface_key_body
+
+    if tabletop_layout not in {"upright", "side_down"}:
+        raise ValueError("unknown cylindrical tabletop layout")
+    up, plane_offset = _support_plane_robot(calibration)
+    support = support_frame_from_plane(up * plane_offset, up)
+    c2r = validate_se3(calibration.record["c2r"], name="session C2R")
+    object_root = Path(shared_root) / "object_processing"
+    symmetry = load_axial_symmetry(object_root, mode.key_object)
+    stem = "000" if tabletop_layout == "upright" else "001"
+    template = validate_se3(np.load(
+        object_root / mode.key_object / "processed_data" / "info" /
+        "tabletop" / f"{stem}.npy", allow_pickle=False),
+        name=f"tabletop {stem}")
+    orientation = support[:3, :3] @ template[:3, :3]
+
+    # A side-down cylinder still has one observable direction in the support
+    # plane.  Retain that direction from FoundPose while quotienting the
+    # identical-end sign and the unobservable axial roll.
+    raw_robot = np.linalg.inv(c2r) @ validate_se3(
+        pose_world, name="raw refined tabletop key pose")
+    if tabletop_layout == "side_down":
+        desired = raw_robot[:3, :3] @ symmetry.axis_local
+        desired = desired - float(np.dot(desired, up)) * up
+        norm = float(np.linalg.norm(desired))
+        if norm <= 1e-12:
+            raise ValueError("side-down key has no observed support-plane axis")
+        desired /= norm
+        base = orientation @ symmetry.axis_local
+        base -= float(np.dot(base, up)) * up
+        base /= np.linalg.norm(base)
+        if np.dot(base, desired) < 0:
+            desired = -desired
+        angle = float(np.arctan2(
+            np.dot(up, np.cross(base, desired)), np.dot(base, desired)))
+        orientation = _axis_rotation(up, angle) @ orientation
+
+    raw_mesh = (object_root / mode.key_object / "raw_mesh" /
+                f"{mode.key_object}.obj")
+    fitted, diagnostics = fit_support_surface_key_body(
+        masks=masks, intrinsics_undist=intrinsics_undist,
+        extrinsics_camera_world=extrinsics_camera_world, c2r=c2r,
+        support_pose_robot=support, raw_mesh=raw_mesh,
+        orientation_robot=orientation, center_local=symmetry.center_local,
+        support_source=("measured_charuco_board" if
+                        "T_robot_board" in calibration.board else
+                        "configured_table_surface"))
+    fitted_robot = np.linalg.inv(c2r) @ fitted
+    raw_center = (raw_robot[:3, :3] @ symmetry.center_local
+                  + raw_robot[:3, 3])
+    fitted_center = (fitted_robot[:3, :3] @ symmetry.center_local
+                     + fitted_robot[:3, 3])
+    diagnostics["raw_refined_pose_world"] = validate_se3(pose_world).tolist()
+    diagnostics["raw_refined_pose_robot"] = raw_robot.tolist()
+    diagnostics["center_correction_robot_m"] = (
+        fitted_center - raw_center).tolist()
+    diagnostics["support_normal_correction_m"] = float(
+        np.dot(fitted_center - raw_center, up))
+    diagnostics["tabletop_stem"] = stem
+    return fitted, diagnostics
 
 
 def _pose_residual(
@@ -431,74 +527,53 @@ def _admit_key_capture_common(
     if not callable(getattr(init_orchestrator, "refine_from_payloads", None)):
         raise ValueError("AutoDex IoU/silhouette key selector is unavailable")
     tabletop_layout = None
-    if stock_tabletop_cylinder and _has_session_support_plane(calibration):
-        tabletop_layout = _tabletop_cylinder_axis_layout(
+    tabletop_layout_source = None
+    stock_tabletop_layout = None
+    if stock_tabletop_cylinder:
+        if not _has_session_support_plane(calibration):
+            raise ValueError("tabletop cylinder needs the frozen support plane")
+        stock_tabletop_layout = _tabletop_cylinder_axis_layout(
             poses, calibration=calibration, axis_local=axis)
-    stock_tabletop_layout = tabletop_layout
-    board_fit = None
-    if stock_tabletop_cylinder and "T_robot_board" in calibration.board:
-        # Raw FoundPose axes can disagree even when the key is visibly
-        # upright. Fit the board-supported upright body for either raw class,
-        # then select the shape that explains the acquired masks better.
-        from .board_socket_fit import fit_board_socket_body
-        try:
-            fitted_pose, fit = fit_board_socket_body(
-                masks={serial: capture.masks[serial]["mask"]
-                       for serial in admitted_ids},
-                intrinsics_undist={serial: init_orchestrator.intrinsics_undist[serial]
-                                   for serial in admitted_ids},
-                extrinsics_camera_world={serial: init_orchestrator.extrinsics[serial]
-                                         for serial in admitted_ids},
-                c2r=np.asarray(calibration.record["c2r"], dtype=np.float64),
-                board_pose_robot=np.asarray(
-                    calibration.board["T_robot_board"], dtype=np.float64),
-                raw_mesh=Path(shared_root) / "object_processing" /
-                    mode.key_object / "raw_mesh" / f"{mode.key_object}.obj")
-            board_fit = (fitted_pose, fit)
-        except (ValueError, np.linalg.LinAlgError):
-            pass
-    if board_fit is not None:
-        _, raw_diagnostics = init_orchestrator.refine_from_payloads(
-            capture.masks, capture.poses, subset_serials=admitted_ids,
-            sil_iters=0, selection_mode="iou")
-        raw_iou = raw_diagnostics.get("best_iou")
-        raw_iou = float(raw_iou) if raw_iou is not None else float("-inf")
-        if board_fit[1]["mean_body_iou"] >= raw_iou:
-            tabletop_layout = "upright"
-            pose = board_fit[0]
-            per_view_iou = board_fit[1]["per_view_iou"]
-            board_selected = max(per_view_iou, key=per_view_iou.__getitem__)
-            diagnostics = {
-                "best_serial": board_selected,
-                "best_iou": board_fit[1]["mean_body_iou"],
-                "sil_skipped": True,
-                "board_body_fit": board_fit[1],
-                "stock_initial_iou": raw_iou,
-                "stock_axis_layout": stock_tabletop_layout,
-            }
-        else:
-            pose, diagnostics = init_orchestrator.refine_from_payloads(
-                capture.masks, capture.poses, subset_serials=admitted_ids,
-                sil_iters=silhouette_iterations,
-                sil_loss_threshold=silhouette_loss_threshold,
-                selection_mode="iou")
-    else:
-        pose, diagnostics = init_orchestrator.refine_from_payloads(
-            capture.masks, capture.poses, subset_serials=admitted_ids,
-            sil_iters=silhouette_iterations,
-            sil_loss_threshold=silhouette_loss_threshold,
-            selection_mode="iou")
+        tabletop_layout, tabletop_layout_source = _requested_tabletop_layout(
+            stock_tabletop_layout)
+    pose, diagnostics = init_orchestrator.refine_from_payloads(
+        capture.masks, capture.poses, subset_serials=admitted_ids,
+        sil_iters=silhouette_iterations,
+        sil_loss_threshold=silhouette_loss_threshold,
+        selection_mode="iou")
     if pose is None or not isinstance(diagnostics, dict):
         raise ValueError("AutoDex key pose refinement failed")
-    if tabletop_layout == "side_down":
-        pose, support_offset = _support_side_down_key_on_table(
-            pose, calibration=calibration, shared_root=shared_root,
-            mode=mode)
-        diagnostics["support_surface_offset_m"] = support_offset
-        # Keep the historical evidence field for ChArUco sessions only.
-        if "T_robot_board" in calibration.board:
-            diagnostics["board_support_offset_m"] = support_offset
+    if stock_tabletop_cylinder:
+        raw_pose = validate_se3(pose, name="raw refined key pose_world")
+        raw_diagnostics = dict(diagnostics)
+        pose, support_fit = _support_constrained_tabletop_key(
+            raw_pose, tabletop_layout=tabletop_layout,
+            masks={serial: capture.masks[serial]["mask"]
+                   for serial in admitted_ids},
+            intrinsics_undist={
+                serial: init_orchestrator.intrinsics_undist[serial]
+                for serial in admitted_ids},
+            extrinsics_camera_world={
+                serial: init_orchestrator.extrinsics[serial]
+                for serial in admitted_ids},
+            calibration=calibration, shared_root=shared_root, mode=mode)
+        per_view_iou = support_fit["per_view_iou"]
+        selected = max(per_view_iou, key=per_view_iou.__getitem__)
+        diagnostics = {
+            **raw_diagnostics,
+            "best_serial": selected,
+            "best_iou": float(per_view_iou[selected]),
+            "support_body_fit": support_fit,
+            "stock_initial_iou": raw_diagnostics.get("best_iou"),
+            "stock_axis_layout": stock_tabletop_layout,
+            "support_surface_offset_m": support_fit[
+                "support_normal_correction_m"],
+            "board_support_offset_m": (
+                support_fit["support_normal_correction_m"]
+                if "T_robot_board" in calibration.board else None),
+        }
     diagnostics["tabletop_axis_layout"] = tabletop_layout
+    diagnostics["tabletop_axis_layout_source"] = tabletop_layout_source
     selected = diagnostics.get("best_serial")
     if selected not in admitted_ids:
         raise ValueError("AutoDex selected a non-admitted key camera")
@@ -518,12 +593,12 @@ def _admit_key_capture_common(
         distance, angle = _pose_residual(
             refined, poses[camera], cylinder_center=center,
             cylinder_axis=axis)
-        max_center = max(max_center, distance)
-        max_angle = max(max_angle, angle)
-        if (not stock_tabletop_cylinder and
-                (distance > maximum_multiview_center_error_mm or
-                 angle > maximum_multiview_angle_error_deg)):
-            raise ValueError("refined key pose conflicts with admitted views")
+        if not stock_tabletop_cylinder:
+            max_center = max(max_center, distance)
+            max_angle = max(max_angle, angle)
+            if (distance > maximum_multiview_center_error_mm or
+                    angle > maximum_multiview_angle_error_deg):
+                raise ValueError("refined key pose conflicts with admitted views")
     if held_phase:
         distance, angle = _pose_residual(
             prior, refined, cylinder_center=center, cylinder_axis=axis)
@@ -537,7 +612,7 @@ def _admit_key_capture_common(
     upper = max(verified[serial]["timestamp_s"] +
                 verified[serial]["max_error_s"] for serial in admitted_ids)
     selection = {
-        "method": ("board_constrained_key_body" if "board_body_fit" in diagnostics
+        "method": ("support_constrained_key_body" if stock_tabletop_cylinder
                    else "AutoDex_refine_from_payloads_iou"),
         "perception_input": perception_input,
         "best_serial": selected,
@@ -547,9 +622,12 @@ def _admit_key_capture_common(
         "sil_loss": diagnostics.get("sil_loss"),
         "sil_skipped": diagnostics.get("sil_skipped", False),
         "board_body_fit": diagnostics.get("board_body_fit"),
+        "support_body_fit": diagnostics.get("support_body_fit"),
         "stock_initial_iou": diagnostics.get("stock_initial_iou"),
         "stock_axis_layout": diagnostics.get("stock_axis_layout"),
         "tabletop_axis_layout": diagnostics.get("tabletop_axis_layout"),
+        "tabletop_axis_layout_source": diagnostics.get(
+            "tabletop_axis_layout_source"),
         "support_surface_offset_m": diagnostics.get(
             "support_surface_offset_m"),
         "board_support_offset_m": diagnostics.get("board_support_offset_m"),

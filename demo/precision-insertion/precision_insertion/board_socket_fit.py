@@ -240,6 +240,144 @@ def fit_support_surface_socket_body(
                         name="support-constrained socket pose"), diagnostics
 
 
+def fit_support_surface_key_body(
+    *, masks: Mapping[str, np.ndarray],
+    intrinsics_undist: Mapping[str, np.ndarray],
+    extrinsics_camera_world: Mapping[str, np.ndarray],
+    c2r: np.ndarray, support_pose_robot: np.ndarray, raw_mesh: Path,
+    orientation_robot: np.ndarray, center_local: np.ndarray,
+    support_source: str = "measured_support_surface",
+) -> tuple[np.ndarray, dict]:
+    """Fit a known tabletop key at a fixed support-relative orientation.
+
+    FoundPose can explain a single silhouette at the wrong depth along that
+    camera's ray.  The tabletop class supplies the cylinder orientation and
+    the frozen support plane supplies its missing depth.  Each admitted mask
+    then estimates the two tangential coordinates by aligning the projected
+    mesh hull to the mask centroid; the median combines all available views.
+
+    This is a geometric pose refinement, not a new acceptance threshold.  It
+    works for both an end-down and a side-down cylinder because contact with
+    the plane is computed from the complete metric mesh after applying the
+    requested orientation.
+    """
+    if (not masks or set(masks) != set(intrinsics_undist) or
+            set(masks) != set(extrinsics_camera_world)):
+        raise ValueError("key support fit requires matching calibrated views")
+    support = validate_se3(support_pose_robot, name="measured support pose")
+    world_robot = validate_se3(c2r, name="C2R")
+    rotation = np.asarray(orientation_robot, dtype=np.float64)
+    center = np.asarray(center_local, dtype=np.float64)
+    if (rotation.shape != (3, 3) or center.shape != (3,) or
+            not np.all(np.isfinite(rotation)) or
+            not np.all(np.isfinite(center)) or
+            not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6) or
+            np.linalg.det(rotation) < 0.999):
+        raise ValueError("key support fit needs a proper orientation and center")
+    xyz = _mesh_vertices(raw_mesh)
+    xyz1 = np.column_stack((xyz, np.ones(len(xyz), dtype=np.float64)))
+    up = support[:3, 2]
+    x_axis = support[:3, 0]
+    y_axis = support[:3, 1]
+    rotated = xyz @ rotation.T
+    support_clearance = -float(np.min(rotated @ up))
+    center_height = float(np.dot(rotation @ center, up) + support_clearance)
+
+    def pose_at(xy: np.ndarray) -> np.ndarray:
+        pose = np.eye(4)
+        pose[:3, :3] = rotation
+        pose[:3, 3] = (support[:3, 3] + float(xy[0]) * x_axis
+                       + float(xy[1]) * y_axis + support_clearance * up)
+        return pose
+
+    estimates: dict[str, np.ndarray] = {}
+    views = []
+    for camera in sorted(masks):
+        with timed("key.body_centroid_ray", phase="key", kind="geometry",
+                   camera_id=camera):
+            mask = np.asarray(masks[camera], dtype=bool)
+            K = np.asarray(intrinsics_undist[camera], dtype=np.float64)
+            E = validate_se3(extrinsics_camera_world[camera],
+                             name=f"{camera} camera/world") @ world_robot
+            if (mask.ndim != 2 or not mask.any() or K.shape != (3, 3) or
+                    not np.all(np.isfinite(K)) or K[0, 0] <= 0 or
+                    K[1, 1] <= 0 or not np.allclose(K[2], [0, 0, 1], atol=1e-8)):
+                raise ValueError(f"invalid key image or intrinsics: {camera}")
+            yy, xx = np.nonzero(mask)
+            pixel = np.array([float(xx.mean()), float(yy.mean()), 1.0])
+            bounds = (int(xx.min()), int(yy.min()), int(xx.max()) + 1,
+                      int(yy.max()) + 1)
+            robot_camera = np.linalg.inv(E)
+            origin = robot_camera[:3, 3]
+            ray = robot_camera[:3, :3] @ np.linalg.solve(K, pixel)
+            denominator = float(np.dot(ray, up))
+            if abs(denominator) < 1e-8:
+                raise ValueError(f"key ray is parallel to support plane: {camera}")
+            distance = float(np.dot(
+                support[:3, 3] + center_height * up - origin, up) / denominator)
+            if distance <= 0:
+                raise ValueError(f"key mask ray points behind camera: {camera}")
+            center_guess = origin + distance * ray
+            origin_guess = center_guess - rotation @ center
+            xy = np.asarray([
+                np.dot(origin_guess - support[:3, 3], x_axis),
+                np.dot(origin_guess - support[:3, 3], y_axis),
+            ])
+
+            def hull_at(value: np.ndarray) -> np.ndarray:
+                return _project_hull(xyz1, pose_at(value), E, K)
+
+            # Two local image-Jacobian steps are enough for the millimetre-
+            # scale tangential correction while retaining the exact support
+            # constraint at every iterate.
+            for _ in range(2):
+                projected_center = _hull_center(hull_at(xy))
+                jacobian = np.column_stack([
+                    (_hull_center(hull_at(xy + direction)) - projected_center)
+                    / 0.001
+                    for direction in (np.array([0.001, 0.0]),
+                                      np.array([0.0, 0.001]))
+                ])
+                delta, *_ = np.linalg.lstsq(
+                    jacobian, pixel[:2] - projected_center, rcond=None)
+                xy = xy + delta
+            estimates[camera] = xy
+            views.append((camera, mask, K, E, bounds))
+
+    with timed("key.body_multiview_median", phase="key", kind="geometry",
+               camera_count=len(views)):
+        per_camera_xy = np.asarray([estimates[camera]
+                                    for camera in sorted(estimates)])
+        median_xy = np.median(per_camera_xy, axis=0)
+        pose_robot = pose_at(median_xy)
+
+    per_view = {}
+    for camera, mask, K, E, bounds in views:
+        with timed("key.body_hull_iou", phase="key", kind="geometry",
+                   camera_id=camera):
+            per_view[camera] = _region_iou(
+                _project_hull(xyz1, pose_robot, E, K), mask, bounds)
+    diagnostics = {
+        "method": "support_normal_full_mesh_mask_all_view_median",
+        "support_source": support_source,
+        "support_clearance_m": support_clearance,
+        "center_height_m": center_height,
+        "per_view_iou": per_view,
+        "mean_body_iou": float(np.mean(list(per_view.values()))),
+        "per_view_support_xy_m": {
+            camera: estimates[camera].tolist() for camera in sorted(estimates)},
+        "support_xy_m": median_xy.tolist(),
+        "camera_ids": sorted(masks),
+        "aggregation": {
+            "method": "median_all_available_views",
+            "camera_count": len(masks),
+            "scope": "tabletop_support_geometry_not_an_acceptance_gate",
+        },
+    }
+    return validate_se3(world_robot @ pose_robot,
+                        name="support-constrained key pose"), diagnostics
+
+
 def fit_board_socket_body(
     *, masks: Mapping[str, np.ndarray],
     intrinsics_undist: Mapping[str, np.ndarray],

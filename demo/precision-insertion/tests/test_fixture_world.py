@@ -280,6 +280,39 @@ def test_cylinder_scene_preserves_observed_center_through_camera_to_robot_snap(
         atol=1e-12)
 
 
+def test_forced_cylinder_tabletop_class_preserves_physical_center(
+        tmp_path, monkeypatch):
+    mode = select_mode("cylinder", 20)
+    session, _ = _session(tmp_path, mode)
+    _object(tmp_path / "object_processing", name=mode.key_object)
+    observed = _pose(tilt_deg=90.)
+    observed[:3, 3] = [.31, -.08, .09]
+    center = np.array([0., 0., .04])
+    physical_center = observed[:3, :3] @ center + observed[:3, 3]
+    captured = {}
+
+    def make_scene(pose_world, transform, _name, *, obj_root,
+                   tabletop_geometry):
+        captured["pose_robot"] = np.linalg.inv(transform) @ pose_world
+        return {
+            "mesh": {"target": {
+                "pose": se32cart(captured["pose_robot"]).tolist(),
+                "file_path": "key.obj"}},
+            "cuboid": {"table": table_cuboid(tabletop_geometry)},
+        }
+
+    monkeypatch.setattr("src.execution.scene_cfg.pose_world_to_scene_cfg",
+                        make_scene)
+    monkeypatch.setenv("PRECISION_KEY_TABLETOP_OVERRIDE", "end_down")
+    build_trial_scene_from_session(
+        mode=mode, shared_root=tmp_path, calibration=session,
+        key_pose_world=observed)
+    result = captured["pose_robot"]
+    np.testing.assert_allclose(
+        result[:3, :3] @ center + result[:3, 3], physical_center,
+        atol=1e-12)
+
+
 def test_trial_scene_rejects_wrong_socket_mode_or_changed_mesh(tmp_path, monkeypatch):
     mode = select_mode("square", 1.5)
     session, mesh = _session(tmp_path, mode)

@@ -15,7 +15,7 @@ from autodex.utils.conversion import se32cart
 from .assets import AssetPaths
 from .config import TaskMode
 from .geometry import validate_se3
-from .symmetry import snap_axisymmetric_tabletop_pose
+from .symmetry import load_axial_symmetry, snap_axisymmetric_tabletop_pose
 
 if TYPE_CHECKING:
     from .calibration import SessionCalibration
@@ -148,11 +148,13 @@ def build_trial_scene_from_session(
             template = validate_se3(np.load(
                 paths.key_tabletop_dir / f"{stems[override]}.npy",
                 allow_pickle=False), name=f"forced tabletop {override}")
-            # Keep the fresh FoundPose origin/XY and replace only the axial
-            # class. The stock scene builder below performs the usual table
-            # snap, so this is a test-time class correction rather than a
-            # fabricated object position.
+            symmetry = load_axial_symmetry(
+                paths.object_root, mode.key_object)
+            physical_center = (robot_pose[:3, :3] @ symmetry.center_local
+                               + robot_pose[:3, 3])
             robot_pose[:3, :3] = template[:3, :3]
+            robot_pose[:3, 3] = (
+                physical_center - robot_pose[:3, :3] @ symmetry.center_local)
         robot_pose = snap_axisymmetric_tabletop_pose(
             robot_pose, object_root=paths.object_root,
             object_name=mode.key_object,

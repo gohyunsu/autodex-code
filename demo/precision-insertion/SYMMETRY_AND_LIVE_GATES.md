@@ -17,7 +17,7 @@ is unobservable, while exchanging its open rim and closed base is invalid.
 | Stage | Input | Symmetry use | Output |
 | --- | --- | --- | --- |
 | Socket freeze, `calibration.py` | Per-capture refined socket poses | Compares directed C∞ axes, ignoring axial yaw; one capture is permitted | Frozen socket pose and collision fixture |
-| Key multiview, `key_perception.py` | SAM/FoundPose per-view poses and stock refined pose | Compares physical centers and unoriented key axes; axial yaw and identical ends do not count as disagreement | Observed key pose and frame evidence |
+| Key multiview, `key_perception.py` | SAM masks, raw FoundPose pose/class evidence, calibrated cameras, metric key mesh and frozen support plane | Selects end-down or side-down geometry under D∞, makes the full mesh touch the plane, and fits support-plane XY to all admitted masks; axial yaw and identical ends do not count as disagreement | Support-constrained observed key pose plus retained raw/fitted diagnostics |
 | Tabletop class, `pose_selection.py` | Fresh observed key pose | Matches local-Z D∞ axis to v8 `000` or `001` | Candidate catalogue stem |
 | Trial scene, `symmetry.py` and `world.py` | Observed pose, v8 tabletop frame, D∞ center | Rotates an exchanged-end pose **about the key center** into the candidate's end convention, preserving the mesh center | v8 key target pose for pickup planning |
 | Held relation, `held_relation.py` | Post-lift key pose, measured wrist, selected v8 grasp | Searches axial-yaw and end-exchange branches around the physical center | Equivalent key frame and observed key-to-hand relation |
@@ -29,6 +29,16 @@ the observed tip is the end aimed at the socket. It keeps the unobservable
 axial-yaw gauge from the measured wrist and prior grasp. An antiparallel
 directed tip/axis contradicts that observation; it is not silently treated
 as an end exchange after a key end has been assigned for insertion.
+
+For a tabletop cylinder, a single RGB silhouette does not independently fix
+metric depth along its camera ray. `key_perception.py` therefore never sends
+the raw one-view FoundPose translation directly to pickup planning. FoundPose
+still supplies object identity and raw axis evidence. `board_socket_fit.py`
+uses the known cylinder mesh and the session support plane to recover exact
+support-normal placement, then estimates the two tangential coordinates from
+the calibrated SAM-mask projections. The identical corrected
+`KeyPoseObservation.pose_world` is consumed by both the trial scene/planner
+and MV-GoTrack initialization; there is no parallel pose convention.
 
 ## Runtime checks
 
