@@ -316,7 +316,16 @@ class GraspPlanner:
                  robot_urdf_path: Optional[str] = None,
                  external_robot_configs_path: Optional[str] = None,
                  external_asset_path: Optional[str] = None,
-                 use_hand_planner_defaults: bool = False):
+                 use_hand_planner_defaults: bool = False,
+                 candidate_batch_size: Optional[int] = None):
+        if candidate_batch_size is not None:
+            if (not isinstance(candidate_batch_size, int) or
+                    isinstance(candidate_batch_size, bool) or
+                    candidate_batch_size < 1):
+                raise ValueError("candidate_batch_size must be a positive integer")
+            # Preserve the historical batch of 50 unless a runtime with a
+            # smaller complete catalog explicitly removes unused padding.
+            self.BATCH_SIZE = candidate_batch_size
         (robot_file, hand_file, hand_collision_act_dist,
          hand_num_trajopt_seeds, hand_interpolation_type) = self.HAND_CONFIGS.get(
              hand, self.HAND_CONFIGS["allegro"])

@@ -66,3 +66,13 @@ def test_offline_gripper_planner_binds_checkout_content(tmp_path, monkeypatch):
     assert Path(result["external_asset_path"]).is_dir()
     assert result["use_hand_planner_defaults"] is True
     assert received == result
+
+
+def test_robotiq_uses_complete_catalog_sized_batch(monkeypatch):
+    monkeypatch.setenv("PRECISION_END_EFFECTOR", "robotiq_2f85")
+    assert selected_fr3_planner_config_options()["candidate_batch_size"] == 8
+
+
+def test_inspire_preserves_stock_candidate_batch(monkeypatch):
+    monkeypatch.setenv("PRECISION_END_EFFECTOR", "inspire")
+    assert "candidate_batch_size" not in selected_fr3_planner_config_options()
