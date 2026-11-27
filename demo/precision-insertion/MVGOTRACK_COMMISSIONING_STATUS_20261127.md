@@ -90,9 +90,12 @@ a43905fc73e2186548b70a7402ad84eb7bf14eed7a261a37a192605c5bf95a4d
 
 The installed capture4 streamer/manager also match the current branch by
 SHA256. A prior isolated tracker run published 9,700 poses at an average
-15.38 Hz with native-valid fraction 1.0 before a clean session stop. This
-proves the deployed four-view tracker loop, but not continuous tracking during
-a completed robot pickup/transfer episode.
+15.38 Hz with native-valid fraction 1.0 before a clean session stop. A later
+physical attempt bound its same-session FoundPose initializer, first tracked
+pose and Robotiq pickup to a local journal containing 24,027 native-valid
+messages over 1,678.78 s. That attempt stopped at post-squeeze measured-lift
+preflight before lift/transfer, so this proves continuous tracking through
+pickup but not through a completed transfer episode.
 
 ## Capture4 Qwen execution check
 
@@ -134,11 +137,14 @@ Gate 2 passes only after one physical episode preserves all of the following:
 8. post-correction tracker pose;
 9. robot state and synchronized video covering the same interval.
 
-No completed archived robot episode under the current ZeroDex run root binds
-`initialization.json`, `first_pose.json`, the continuous pose journal and all
-pickup/lift/transfer controller records into one attempt. Therefore the
-software path and isolated tracker are verified, but physical continuous
-tracking through a completed manipulation episode is not yet established.
+Attempt `attempt_46ab969b91cd48f0b46132b9df113df8` binds
+`initialization.json`, `first_pose.json`, the continuous pose journal and
+pickup/squeeze controller feedback. It does not contain a completed lift or
+transfer: the old trajectory follower stopped 0.01305 rad from the planned
+grasp endpoint, and the measured state then collided with the table in the
+cuRobo model. The active follower tolerance is now 0.002 rad and the archived
+residual sweep supports that correction, but physical continuous tracking
+through lift, transfer and pre-insertion remains unverified until rerun.
 
 ## Next physical command boundary
 

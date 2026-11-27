@@ -84,6 +84,23 @@ robot motion was issued during this audit.
   reported `stream_pid=null`, `tracker_pid=null`. This is the expected idle
   state before a same-session accepted key pose initializes tracking; the
   audit did not start MV-GoTrack from a stale or fabricated pose.
+- Physical attempt `attempt_46ab969b91cd48f0b46132b9df113df8`
+  bound a same-session four-view key capture, accepted FoundPose initializer,
+  matching capture4 calibration identity, first native-valid tracker pose,
+  Robotiq pickup/squeeze feedback and a continuous local tracker journal. The
+  journal contains 24,027 messages over 1,678.78 s with native-valid fraction
+  1.0 and one unchanged calibration identity. Pickup reached a measured jaw
+  command of 0.65255 with `gripper_grasping=true`; the following measured-lift
+  preflight, rather than tracking, stopped the trial.
+- That measured-lift stop was reproduced from the archived joint state. The
+  old streamed pickup stopped with a 0.01305 rad arm endpoint residual, at
+  which cuRobo reported `INVALID_START_STATE_WORLD_COLLISION` against the
+  table. Replaying the nominal endpoint with the measured jaw width passed;
+  the arm-residual sweep passed through interpolation factor 0.7 and collided
+  from 0.8 onward. The active ZeroDex adapter now continues the already
+  planned stream to a 0.002 rad endpoint tolerance. This is a targeted motion
+  completion fix, not an added perception or task-success gate, and still
+  requires one physical rerun.
 - Robot-free four-camera requests on 2026-11-27 reached the isolated camera,
   SAM3 and FoundPose services. At the commissioned 2,500 us exposure the
   frames were nearly black (per-view gray means 2.3--15.1 on 0--255), all key
@@ -173,7 +190,7 @@ robot motion was issued during this audit.
 | --- | --- |
 | Current hardware execution | The RT kernel is active and `enp4s0` is configured for the FR3. A paired read-only sample combined the live FR3 7-axis state with the capture4 Robotiq position without fault. The local FCI daemon is not currently listening, so it must be restarted before motion. The physical Robotiq is not a Franka Hand; the daemon message that its built-in gripper is unavailable is expected. |
 | Local cuRobo GPU preflight | Planner construction succeeds with the new 8-DoF FR3+Robotiq model, official 2F-85 geometry and the restored FR3 32-seed profile. A fresh measured-scene pickup/transfer/insertion preflight still has to be run after the clean socket/key recapture; model construction alone is not a trajectory result. |
-| Physical Robotiq/MV-GoTrack run | Code, assets, 10 candidates, capture4 services and tracker deployment are present, but the new Robotiq pickup-to-insertion route and same-session tracker initialization have not yet been physically exercised. Capture the moved socket with the key absent, replace and measure the key, run GPU preflight, and initialize tracking only from that accepted pose. |
+| Physical Robotiq/MV-GoTrack run | Same-session FoundPose-to-tracker initialization, continuous four-view tracking, pickup and measured Robotiq squeeze feedback have been physically exercised. The latest attempt stopped at post-squeeze measured-lift preflight because the old trajectory follower left a 0.013 rad arm endpoint residual. The active 0.002 rad completion fix and tracker reinitialization fixes have not yet been exercised through lift, transfer, correction, insertion and release. Rerun from a clean socket capture and current key pose; do not initialize from an archived pose. |
 | Reproduction bundle | The writable NAS manifest now archives merged AutoDex commit `299ddc3`, ParaDex `e2cd4fd`, and nvdiffrast `253ac4f`, and retains 6,861 declared asset files. `--refresh-code-only` no longer scans or mutates the established asset/rig inventories. Both NFS and SMB full-tree verification later entered remote-filesystem response waits while traversing the runtime view, so the post-refresh metadata/SHA256 audit remains to be repeated when NAS metadata service is responsive; the manifest and all three declared code archives are present from both mount views. |
 | VLM accuracy claim | Saved replay supports development, but class balance and independent held-out trials are insufficient for a general accuracy claim. Manual labels remain authoritative during data collection. |
 | Robust insertion claim | Two observed successes are not a controlled success-rate experiment. Repeat fixed-grasp/fixed-socket trials and report stage-wise confidence intervals before making this claim. |
