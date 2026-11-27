@@ -1,5 +1,20 @@
 # Cylinder precision-insertion presentation visuals
 
+## Franka stock-gripper candidate geometry (2026-11-27)
+
+The ZeroDex gripper route has two symmetry-reduced analytic candidates rather
+than a sampled BODex pool: `end_down` for an upright cylinder and `side_down`
+for a lying cylinder. The comparison grid and six 1920x1080 individual views
+are generated from the exact cylindrical-key and Franka hand visual meshes by
+`render_franka_gripper_candidates.py`. The renderer recomputes each transform
+with the runtime `analytic_franka_gripper_grasp` function and requires it to
+match the stored candidate `wrist_se3.npy` before producing an image. These
+are grasp-geometry views, not physical grasp-success evidence.
+
+Local output root:
+
+`~/precision_insertion_project/development/visualizations/franka_gripper_candidates_20261127_final`
+
 ## Passed full-robot offline trajectory set (recommended)
 
 The newest set is under:
