@@ -1161,6 +1161,14 @@ class SessionRunner:
                 None if not applied_xy else
                 pending_xy["diagnostic_report_sha256"]),
             "wrist_correction_socket_m": list(correction),
+            "cylinder_yaw_gauge_socket_rad": float(
+                getattr(self._preflight,
+                        "cylinder_yaw_gauge_socket_rad", 0.0)),
+            "selected_insertion_T_key_hand": (
+                None if getattr(
+                    self._preflight, "selected_insertion_T_key_hand", None
+                ) is None else
+                self._preflight.selected_insertion_T_key_hand.tolist()),
             "robot_ready": False,
         })
         state_path = attempt.write_new(attempt_dir / "state_000.json")
@@ -2132,12 +2140,17 @@ class SessionRunner:
     ):
         """Reuse the same socket-aware held motion for both failure stages."""
         held_relation = self._postlift_preflight.relation
+        observed_command = (
+            self._postlift_preflight.T_key_hand_command
+            if isinstance(self._postlift_preflight, PostLiftPreflight)
+            else None)
         relation = validate_se3(
-            (held_relation.T_key_hand_command
+            (observed_command if observed_command is not None else
+             held_relation.T_key_hand_command
              if isinstance(self._postlift_preflight, (
                  BoundedPostLiftPreflight, NominalPostLiftPreflight))
-             and held_relation.T_key_hand_command is not None
-             else held_relation.T_key_hand),
+             and held_relation.T_key_hand_command is not None else
+             held_relation.T_key_hand),
             name="failed-return post-lift T_key_hand")
         rest = admitted_key_pose_robot(self._preflight)
         held = plan_repose_held_from_state(

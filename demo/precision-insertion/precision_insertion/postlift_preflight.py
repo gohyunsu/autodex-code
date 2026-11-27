@@ -24,13 +24,13 @@ from .end_effector import end_effector_spec
 from .geometry import validate_se3
 from .held_relation import HeldRelation, resolve_postlift_held_relation
 from .live_robot_state import LiveRobotState
+from .next_trial_xy import compensated_key_hand_relation
 from .path_audit import PathAuditLimits
 from .preflight import InsertionPreflight, plan_held_transfer_and_axial
 from .records import AttemptRecord
 from .targets import InsertionTargets, build_rigid_insertion_targets
 from .trial_preflight import TrialPreflight, _canonical_sha256
 from .world import build_held_scene_from_trial, validated_frozen_socket_pose
-from autodex.utils.conversion import cart2se3
 
 
 @dataclass(frozen=True)
@@ -53,6 +53,8 @@ class PostLiftPreflight:
     targets: InsertionTargets | None
     planning: InsertionPreflight | None
     previous_trial_wrist_correction_socket_m: tuple[float, float] = (0.0, 0.0)
+    T_key_hand_command: np.ndarray | None = None
+    cylinder_yaw_gauge_socket_rad: float = 0.0
 
     def to_record(self) -> dict:
         return {
@@ -74,8 +76,14 @@ class PostLiftPreflight:
             "previous_trial_wrist_correction_socket_m": list(
                 self.previous_trial_wrist_correction_socket_m),
             "previous_trial_correction_status": (
-                "superseded_by_fresh_observed_key_hand_relation" if any(
+                "applied_to_fresh_observed_key_hand_relation" if any(
                     self.previous_trial_wrist_correction_socket_m) else "none"),
+            "T_key_hand_command": (
+                self.relation.T_key_hand.tolist()
+                if self.T_key_hand_command is None else
+                self.T_key_hand_command.tolist()),
+            "cylinder_yaw_gauge_socket_rad": (
+                self.cylinder_yaw_gauge_socket_rad),
             "endpoint_screen": self.endpoint_screen,
             "targets": None if self.targets is None else self.targets.to_record(),
             "planning": None if self.planning is None else self.planning.to_record(),
@@ -182,12 +190,12 @@ def plan_postlift_observed_transfer(
                                name="measured post-lift wrist FK")
     candidate_dir = Path(matches[0]["candidate_dir"]).expanduser().resolve()
     if spec.is_parallel_gripper:
-        pickup_key = validate_se3(cart2se3(np.asarray(
-            trial.trial_scene["mesh"]["target"]["pose"], dtype=np.float64)),
-            name="initial analytic pickup T_robot_key")
+        if trial.nominal_insertion_T_key_hand is None:
+            raise ValueError(
+                "parallel-gripper trial lacks its selected insertion gauge")
         nominal_relation = validate_se3(
-            np.linalg.inv(pickup_key) @ trial.pickup_plan.wrist_se3,
-            name="initial analytic T_key_hand")
+            trial.nominal_insertion_T_key_hand,
+            name="initial analytic insertion-gauge T_key_hand")
     else:
         nominal_relation = validate_se3(np.load(
             candidate_dir / "wrist_se3.npy", allow_pickle=False),
@@ -198,6 +206,11 @@ def plan_postlift_observed_transfer(
         candidate_T_key_hand=nominal_relation,
         max_translation_drift_m=max_grasp_translation_drift_m,
         max_rotation_drift_deg=max_grasp_rotation_drift_deg)
+    yaw_gauge = float(trial.cylinder_yaw_gauge_socket_rad)
+    command_relation = compensated_key_hand_relation(
+        mode=mode, shared_root=root, T_key_hand=relation.T_key_hand,
+        wrist_correction_socket_m=attempt.wrist_correction_socket_m,
+        cylinder_yaw_gauge_socket_rad=yaw_gauge)
 
     def result(status: str, *, endpoint=None, targets=None,
                planning=None) -> PostLiftPreflight:
@@ -207,7 +220,8 @@ def plan_postlift_observed_transfer(
             trial.key_observation_id, key_observation_id,
             timestamp, joint_time, start.copy(), joint_sample, pose_world,
             wrist_robot, relation, endpoint, targets, planning,
-            tuple(attempt.wrist_correction_socket_m))
+            tuple(attempt.wrist_correction_socket_m), command_relation,
+            yaw_gauge)
 
     if (relation.translation_drift_m > max_grasp_translation_drift_m or
             relation.rotation_drift_deg > max_grasp_rotation_drift_deg):
@@ -215,12 +229,13 @@ def plan_postlift_observed_transfer(
     endpoint = screen(
         shared_root=root, mode=mode, candidate_dir=candidate_dir,
         minimum_hand_clearance_m=catalog["minimum_hand_clearance_m"],
-        T_key_hand_override=relation.T_key_hand,
+        T_key_hand_override=command_relation,
         hand_poses_override={"measured_post_lift": start[7:].copy()},
+        cylinder_yaw_gauge_socket_rad=yaw_gauge,
         override_source="multiview_key_pose_plus_live_wrist")
     if (not np.allclose(validate_se3(endpoint.get("T_key_hand"),
                                    name="post-lift endpoint T_key_hand"),
-                        relation.T_key_hand, atol=1e-8) or
+                        command_relation, atol=1e-8) or
             not np.allclose(endpoint.get("xy_offset_socket_m"),
                             [0.0, 0.0], atol=1e-12) or
             not np.allclose(endpoint.get("hold_pose_screens", {}).get(
@@ -231,7 +246,8 @@ def plan_postlift_observed_transfer(
         return result("observed_20mm_endpoint_rejected", endpoint=endpoint)
     targets = build_rigid_insertion_targets(
         mode=mode, shared_root=root, calibration=calibration,
-        T_key_hand=relation.T_key_hand)
+        T_key_hand=command_relation,
+        cylinder_yaw_gauge_socket_rad=yaw_gauge)
     planning = plan_held_transfer_and_axial(
         planner=planner, trial_scene=trial.trial_scene,
         shared_root=root, calibration=calibration, targets=targets,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
+import math
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -229,6 +230,88 @@ def test_cylinder_tries_next_grasp_when_socket_opening_plan_fails(
             for row in result.attempted_candidates] == [
                 None, "socket_opening_collision", "sampled_planning_pass"]
     assert len(calls) == 2
+
+
+def test_parallel_cylinder_selects_first_full_chain_yaw_gauge(
+        tmp_path, monkeypatch):
+    """A D-infinity yaw is selected by the full path, then saved verbatim."""
+    _, calibration, catalog, limits = _fixture(tmp_path, monkeypatch)
+    mode = select_mode("cylinder", 20)
+    monkeypatch.setenv("PRECISION_END_EFFECTOR", "robotiq_2f85")
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.session_support_plane_robot",
+        lambda _calibration: (np.asarray([0., 0., 1.]), 0.0))
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.match_cylinder_tabletop_stem",
+        lambda *_args, **_kwargs: {"stem": "000", "rotation_error_deg": 0.0})
+    physical = np.eye(4)
+    nominal = np.eye(4)
+    nominal[2, 3] = 0.08
+
+    def analytic(_pose, *, identifier, **_kwargs):
+        return SimpleNamespace(
+            T_key_hand=physical.copy(),
+            T_key_hand_insertion_gauge=nominal.copy(),
+            candidate_override=lambda identifier: (
+                np.eye(4)[None], np.zeros((1, 1)),
+                np.full((1, 1), .53), [tuple(identifier)], [None]))
+
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight."
+        "analytic_franka_gripper_grasp_for_candidate", analytic)
+    target_yaws = []
+
+    def targets(**kwargs):
+        yaw = kwargs["cylinder_yaw_gauge_socket_rad"]
+        target_yaws.append(yaw)
+        return SimpleNamespace(yaw=yaw, T_key_hand=kwargs["T_key_hand"])
+
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.build_rigid_insertion_targets",
+        targets)
+
+    def insertion(*, targets, **_kwargs):
+        passed = math.isclose(targets.yaw, math.pi / 4, abs_tol=1e-12)
+        path = np.zeros((2, 8))
+        return InsertionPreflight(
+            "sampled_planning_pass" if passed else "transfer_unreachable",
+            path if passed else None, path if passed else None,
+            path if passed else None,
+            {"sampled_clear": True} if passed else None, 1 if passed else 0,
+            np.asarray([.53]), "commanded_nominal", ({
+                "stage": "transfer", "success": passed,
+                "failure_stage": None if passed else "ik"},))
+
+    monkeypatch.setattr(
+        "precision_insertion.trial_preflight.plan_insertion_after_pickup",
+        insertion)
+    monkeypatch.setattr(
+        "precision_insertion.socket_release.check_socket_opening",
+        lambda *_args: (np.zeros((2, 8)), {"all_feasible": True}))
+
+    class ParallelPlanner:
+        def set_start_state(self, _q):
+            pass
+
+        def plan(self, _scene, _name, _version, **kwargs):
+            assert kwargs["hand"] == "robotiq_2f85"
+            key = tuple(kwargs["candidate_override"][3][0])
+            return SimpleNamespace(
+                success=True, scene_info=key,
+                pregrasp_pose=np.asarray([0.0]),
+                grasp_pose=np.asarray([.53]))
+
+    result = _run(
+        tmp_path, (mode, calibration, catalog, limits), ParallelPlanner(),
+        live_start_q=np.zeros(8))
+    assert result.status == "sampled_planning_pass"
+    assert target_yaws == pytest.approx([0.0, math.pi / 4])
+    assert result.cylinder_yaw_gauge_socket_rad == pytest.approx(math.pi / 4)
+    np.testing.assert_allclose(result.nominal_insertion_T_key_hand, nominal)
+    np.testing.assert_allclose(result.selected_insertion_T_key_hand, nominal)
+    attempts = result.attempted_candidates[0]["cylinder_yaw_gauge_attempts"]
+    assert [row["status"] for row in attempts] == [
+        "transfer_unreachable", "sampled_planning_pass"]
 
 
 def test_xy_retry_plans_only_the_previous_grasp(tmp_path, monkeypatch):

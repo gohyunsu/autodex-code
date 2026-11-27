@@ -21,6 +21,7 @@ import numpy as np
 
 from autodex.utils.conversion import cart2se3
 
+from .analytic_gripper import KEY_END_EXCHANGE
 from .assets import AssetPaths
 from .candidates import select_pose_candidates, validate_catalog_session
 from .config import TaskMode
@@ -55,6 +56,8 @@ class NominalHeldRelation:
     source: str = "selected_v8_wrist_hypothesis_not_observed_key_pose"
     pickup_T_robot_key: np.ndarray | None = None
     pickup_T_robot_hand: np.ndarray | None = None
+    insertion_gauge_T_key_hand: np.ndarray | None = None
+    cylinder_yaw_gauge_socket_rad: float = 0.0
 
     def to_record(self) -> dict:
         return {
@@ -69,6 +72,12 @@ class NominalHeldRelation:
                                    self.pickup_T_robot_key.tolist()),
             "pickup_T_robot_hand": (None if self.pickup_T_robot_hand is None else
                                     self.pickup_T_robot_hand.tolist()),
+            "insertion_gauge_T_key_hand": (
+                self.T_key_hand.tolist()
+                if self.insertion_gauge_T_key_hand is None else
+                self.insertion_gauge_T_key_hand.tolist()),
+            "cylinder_yaw_gauge_socket_rad": (
+                self.cylinder_yaw_gauge_socket_rad),
             "scope": "experimental_repeatable_grasp_bias_not_physical_calibration",
         }
 
@@ -211,18 +220,42 @@ def plan_nominal_postlift_transfer(
         relation = validate_se3(
             np.linalg.inv(pickup_key) @ pickup_hand,
             name="initial analytic T_key_hand")
+        if (trial.nominal_insertion_T_key_hand is None or
+                trial.selected_insertion_T_key_hand is None):
+            raise ValueError(
+                "parallel-gripper trial lacks its selected insertion gauge")
+        insertion_gauge = validate_se3(
+            trial.nominal_insertion_T_key_hand,
+            name="selected nominal insertion-gauge T_key_hand")
+        command = validate_se3(
+            trial.selected_insertion_T_key_hand,
+            name="selected wrist-corrected insertion T_key_hand")
+        yaw_gauge = float(trial.cylinder_yaw_gauge_socket_rad)
+        expected_command = compensated_key_hand_relation(
+            mode=mode, shared_root=root, T_key_hand=insertion_gauge,
+            wrist_correction_socket_m=attempt.wrist_correction_socket_m,
+            cylinder_yaw_gauge_socket_rad=yaw_gauge)
+        if not np.allclose(command, expected_command, atol=1e-8, rtol=0):
+            raise ValueError(
+                "parallel-gripper insertion relation differs from trial preflight")
         relation_source = "initial_analytic_pickup_pose_and_planned_wrist"
     else:
         relation = validate_se3(np.load(wrist_file, allow_pickle=False),
                                 name="selected nominal v8 T_key_hand")
+        insertion_gauge = relation.copy()
+        yaw_gauge = 0.0
+        command = compensated_key_hand_relation(
+            mode=mode, shared_root=root, T_key_hand=insertion_gauge,
+            wrist_correction_socket_m=attempt.wrist_correction_socket_m)
         relation_source = "selected_v8_wrist_hypothesis_not_observed_key_pose"
-    command = compensated_key_hand_relation(
-        mode=mode, shared_root=root, T_key_hand=relation,
-        wrist_correction_socket_m=attempt.wrist_correction_socket_m)
     nominal = NominalHeldRelation(
-        relation, command, wrist_file, _sha(wrist_file),
-        tuple(attempt.wrist_correction_socket_m), relation_source,
-        pickup_key, pickup_hand)
+        T_key_hand=relation, T_key_hand_command=command,
+        wrist_source_path=wrist_file, wrist_source_sha256=_sha(wrist_file),
+        wrist_correction_socket_m=tuple(attempt.wrist_correction_socket_m),
+        source=relation_source, pickup_T_robot_key=pickup_key,
+        pickup_T_robot_hand=pickup_hand,
+        insertion_gauge_T_key_hand=insertion_gauge,
+        cylinder_yaw_gauge_socket_rad=yaw_gauge)
     if (not isinstance(joint_sample, LiveRobotState) or
             joint_sample.source != "robot_joint_feedback"):
         raise ValueError("nominal transfer needs measured post-lift joints")
@@ -240,6 +273,7 @@ def plan_nominal_postlift_transfer(
             shared_root=root, mode=mode, candidate_dir=candidate_dir,
             minimum_hand_clearance_m=catalog["minimum_hand_clearance_m"],
             T_key_hand_override=command,
+            cylinder_yaw_gauge_socket_rad=yaw_gauge,
             override_source="nominal_v8_relation_with_pending_xy")
     if (not np.allclose(validate_se3(endpoint.get("T_key_hand"),
                                     name="nominal endpoint relation"),
@@ -262,7 +296,8 @@ def plan_nominal_postlift_transfer(
         return result("nominal_20mm_endpoint_rejected")
     targets = build_rigid_insertion_targets(
         mode=mode, shared_root=root, calibration=calibration,
-        T_key_hand=command)
+        T_key_hand=command,
+        cylinder_yaw_gauge_socket_rad=yaw_gauge)
     planning = plan_held_transfer_and_axial(
         planner=planner, trial_scene=trial.trial_scene,
         shared_root=root, calibration=calibration,
@@ -354,10 +389,27 @@ def verify_nominal_postlift_preflight(
     if not np.allclose(validate_se3(relation_record.get("T_key_hand")),
                        nominal, atol=1e-8, rtol=0):
         raise ValueError("nominal key-hand relation differs from v8 candidate")
+    insertion_gauge = validate_se3(
+        relation_record.get("insertion_gauge_T_key_hand", nominal),
+        name="saved insertion-gauge T_key_hand")
+    yaw_gauge = float(relation_record.get(
+        "cylinder_yaw_gauge_socket_rad", 0.0))
+    if not math.isfinite(yaw_gauge):
+        raise ValueError("saved cylinder yaw gauge is not finite")
+    if relation_record["source"] == (
+            "initial_analytic_pickup_pose_and_planned_wrist"):
+        symmetry_equivalents = (nominal, KEY_END_EXCHANGE @ nominal)
+        if not any(np.allclose(insertion_gauge, value, atol=1e-8, rtol=0)
+                   for value in symmetry_equivalents):
+            raise ValueError(
+                "analytic insertion gauge is not D-infinity equivalent")
+    elif not np.allclose(insertion_gauge, nominal, atol=1e-8, rtol=0):
+        raise ValueError("v8 insertion gauge differs from its grasp relation")
     command = compensated_key_hand_relation(
-        mode=mode, shared_root=shared_root, T_key_hand=nominal,
+        mode=mode, shared_root=shared_root, T_key_hand=insertion_gauge,
         wrist_correction_socket_m=relation_record.get(
-            "wrist_correction_socket_m"))
+            "wrist_correction_socket_m"),
+        cylinder_yaw_gauge_socket_rad=yaw_gauge)
     if not np.allclose(validate_se3(
             relation_record.get("T_key_hand_command")),
             command, atol=1e-8, rtol=0):
@@ -410,6 +462,12 @@ def verify_nominal_postlift_preflight(
                 not np.allclose(validate_se3(record["targets"]["T_key_hand"]),
                                 command, atol=1e-8, rtol=0) or
                 not np.allclose(validate_se3(record["endpoint_screen"][
-                    "T_key_hand"]), command, atol=1e-8, rtol=0)):
+                    "T_key_hand"]), command, atol=1e-8, rtol=0) or
+                not math.isclose(float(record["targets"].get(
+                    "cylinder_yaw_gauge_socket_rad", 0.0)), yaw_gauge,
+                    abs_tol=1e-12) or
+                not math.isclose(float(record["endpoint_screen"].get(
+                    "cylinder_yaw_gauge_socket_rad", 0.0)), yaw_gauge,
+                    abs_tol=1e-12)):
             raise ValueError("nominal passing plan lacks its assumed CAD screens")
     return record

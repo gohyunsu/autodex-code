@@ -45,6 +45,11 @@ from .timing_profile import timed
 from .world import build_trial_scene_from_session
 
 
+PARALLEL_GRIPPER_CYLINDER_YAW_GAUGES_RAD = tuple(
+    math.radians(value)
+    for value in (0.0, 45.0, -45.0, 90.0, -90.0, 135.0, -135.0, 180.0))
+
+
 def _canonical_sha256(value: dict) -> str:
     return hashlib.sha256(json.dumps(
         value, sort_keys=True, separators=(",", ":"), allow_nan=False,
@@ -166,6 +171,9 @@ class TrialPreflight:
     wrist_correction_socket_m: tuple[float, float] = (0.0, 0.0)
     repose_assessment: dict | None = None
     cartesian_planner_mode: str = "default"
+    nominal_insertion_T_key_hand: np.ndarray | None = None
+    selected_insertion_T_key_hand: np.ndarray | None = None
+    cylinder_yaw_gauge_socket_rad: float = 0.0
 
     def to_record(self) -> dict:
         return {
@@ -197,6 +205,14 @@ class TrialPreflight:
             "catalog_sha256": self.catalog_sha256,
             "wrist_correction_socket_m": list(self.wrist_correction_socket_m),
             "cartesian_planner_mode": self.cartesian_planner_mode,
+            "nominal_insertion_T_key_hand": (
+                None if self.nominal_insertion_T_key_hand is None else
+                self.nominal_insertion_T_key_hand.tolist()),
+            "selected_insertion_T_key_hand": (
+                None if self.selected_insertion_T_key_hand is None else
+                self.selected_insertion_T_key_hand.tolist()),
+            "cylinder_yaw_gauge_socket_rad": (
+                self.cylinder_yaw_gauge_socket_rad),
             "scope": "read_only_planning_not_camera_or_robot_execution",
             "robot_ready": False,
         }
@@ -422,6 +438,9 @@ def plan_fresh_key_trial(
     rows: list[dict] = []
     selected_key = None
     selected_correction = (0.0, 0.0)
+    selected_nominal_insertion_relation = None
+    selected_insertion_relation = None
+    selected_yaw_gauge = 0.0
     pickup_plan = None
     insertion_plan = None
     status = ""
@@ -497,62 +516,110 @@ def plan_fresh_key_trial(
                 continue
             if tuple(pickup.scene_info) != key:
                 raise ValueError("AutoDex selected a grasp outside the one-grasp override")
-            hand_in_key = (analytic_grasp.T_key_hand.copy()
-                           if analytic_grasp is not None else
-                           validate_se3(np.load(
-                               Path(candidate["candidate_dir"]) / "wrist_se3.npy",
-                               allow_pickle=False), name="v8 T_key_hand"))
-            pickup_hand_in_key = hand_in_key.copy()
+            base_hand_in_key = (
+                analytic_grasp.T_key_hand_insertion_gauge.copy()
+                if analytic_grasp is not None else
+                validate_se3(np.load(
+                    Path(candidate["candidate_dir"]) / "wrist_se3.npy",
+                    allow_pickle=False), name="v8 T_key_hand"))
+            pickup_hand_in_key = (
+                analytic_grasp.T_key_hand.copy()
+                if analytic_grasp is not None else base_hand_in_key.copy())
             correction = (tuple(map(float, retry_correction))
                           if key == retry_candidate and stem == retry_pose_stem
                           else (0.0, 0.0))
-            if correction != (0.0, 0.0):
-                hand_in_key = compensated_key_hand_relation(
-                    mode=mode, shared_root=root, T_key_hand=hand_in_key,
-                    wrist_correction_socket_m=correction)
-            targets = build_rigid_insertion_targets(
-                mode=mode, shared_root=root, calibration=calibration,
-                T_key_hand=hand_in_key)
             hold_options = nominal_hold_poses(
                 pickup.pregrasp_pose, pickup.grasp_pose)
             hold = next(iter(hold_options.values()))
-            with timed("planning.nominal_insertion", phase="planning",
-                       kind="planning", candidate_id=candidate_id):
-                trial = plan_insertion_after_pickup(
-                    planner=planner, pickup_plan=pickup, trial_scene=scene,
-                    shared_root=root, calibration=calibration, targets=targets,
-                    pickup_T_key_hand=pickup_hand_in_key,
-                    held_hand_q=hold, held_hand_source="commanded_nominal",
-                    limits=limits, axial_waypoint_step_m=axial_waypoint_step_m,
-                    exact_distances=False)
-            row["insertion_preflight_status"] = trial.status
-            # Preserve cuRobo's stage/failure/timing records even when this
-            # candidate is rejected and the trial continues to another grasp.
-            # This is evidence only: it does not add a planning gate or change
-            # candidate selection.
-            row["insertion_planner_queries"] = [
-                dict(query) for query in trial.planner_query_records
-            ]
-            if trial.status == "sampled_held_path_rejected":
-                row["sampled_audit_rejection"] = _rejected_path_summary(
-                    trial, planner=planner, targets=targets)
-            if trial.sampled_planning_pass and mode.family == "cylinder":
-                from .socket_release import check_socket_opening
-                with timed("planning.nominal_socket_opening", phase="planning",
-                           kind="planning", candidate_id=candidate_id):
-                    _, opening_check = check_socket_opening(
-                        planner, calibration.collision_scene,
-                        trial.axial_trajectory[-1], limits)
-                row["socket_opening_preflight"] = opening_check
-                if not opening_check["all_feasible"]:
-                    row["insertion_preflight_status"] = (
-                        "socket_opening_collision")
-                    rows.append(row)
-                    continue
+            yaw_gauges = (
+                PARALLEL_GRIPPER_CYLINDER_YAW_GAUGES_RAD
+                if spec.is_parallel_gripper and mode.family == "cylinder"
+                else (0.0,))
+            yaw_attempts = []
+            accepted_relation = None
+            accepted_yaw = None
+            trial = None
+            targets = None
+            for yaw_gauge in yaw_gauges:
+                hand_in_key = base_hand_in_key.copy()
+                if correction != (0.0, 0.0):
+                    hand_in_key = compensated_key_hand_relation(
+                        mode=mode, shared_root=root,
+                        T_key_hand=hand_in_key,
+                        wrist_correction_socket_m=correction,
+                        cylinder_yaw_gauge_socket_rad=yaw_gauge)
+                targets = build_rigid_insertion_targets(
+                    mode=mode, shared_root=root, calibration=calibration,
+                    T_key_hand=hand_in_key,
+                    cylinder_yaw_gauge_socket_rad=yaw_gauge)
+                with timed(
+                        "planning.nominal_insertion", phase="planning",
+                        kind="planning", candidate_id=candidate_id,
+                        cylinder_yaw_gauge_deg=math.degrees(yaw_gauge)):
+                    trial = plan_insertion_after_pickup(
+                        planner=planner, pickup_plan=pickup, trial_scene=scene,
+                        shared_root=root, calibration=calibration,
+                        targets=targets,
+                        pickup_T_key_hand=pickup_hand_in_key,
+                        held_hand_q=hold,
+                        held_hand_source="commanded_nominal",
+                        limits=limits,
+                        axial_waypoint_step_m=axial_waypoint_step_m,
+                        exact_distances=False)
+                gauge_status = trial.status
+                gauge_row = {
+                    "cylinder_yaw_gauge_socket_rad": float(yaw_gauge),
+                    "cylinder_yaw_gauge_socket_deg": float(
+                        math.degrees(yaw_gauge)),
+                    "status": gauge_status,
+                    "planner_queries": [
+                        dict(query) for query in trial.planner_query_records],
+                }
+                if trial.status == "sampled_held_path_rejected":
+                    gauge_row["sampled_audit_rejection"] = (
+                        _rejected_path_summary(
+                            trial, planner=planner, targets=targets))
+                if trial.sampled_planning_pass and mode.family == "cylinder":
+                    from .socket_release import check_socket_opening
+                    with timed(
+                            "planning.nominal_socket_opening",
+                            phase="planning", kind="planning",
+                            candidate_id=candidate_id,
+                            cylinder_yaw_gauge_deg=math.degrees(yaw_gauge)):
+                        _, opening_check = check_socket_opening(
+                            planner, calibration.collision_scene,
+                            trial.axial_trajectory[-1], limits)
+                    gauge_row["socket_opening_preflight"] = opening_check
+                    if not opening_check["all_feasible"]:
+                        gauge_status = "socket_opening_collision"
+                        gauge_row["status"] = gauge_status
+                yaw_attempts.append(gauge_row)
+                if gauge_status == "sampled_planning_pass":
+                    accepted_relation = hand_in_key.copy()
+                    accepted_yaw = float(yaw_gauge)
+                    break
+            assert trial is not None and targets is not None
+            final_gauge = yaw_attempts[-1]
+            row["insertion_preflight_status"] = final_gauge["status"]
+            row["insertion_planner_queries"] = final_gauge[
+                "planner_queries"]
+            row["cylinder_yaw_gauge_socket_rad"] = final_gauge[
+                "cylinder_yaw_gauge_socket_rad"]
+            if len(yaw_attempts) > 1:
+                row["cylinder_yaw_gauge_attempts"] = yaw_attempts
+            if "sampled_audit_rejection" in final_gauge:
+                row["sampled_audit_rejection"] = final_gauge[
+                    "sampled_audit_rejection"]
+            if "socket_opening_preflight" in final_gauge:
+                row["socket_opening_preflight"] = final_gauge[
+                    "socket_opening_preflight"]
             rows.append(row)
-            if trial.sampled_planning_pass:
+            if accepted_relation is not None:
                 selected_key = key
                 selected_correction = correction
+                selected_nominal_insertion_relation = base_hand_in_key.copy()
+                selected_insertion_relation = accepted_relation
+                selected_yaw_gauge = accepted_yaw
                 pickup_plan = pickup
                 insertion_plan = trial
                 status = "sampled_planning_pass"
@@ -608,6 +675,9 @@ def plan_fresh_key_trial(
         wrist_correction_socket_m=selected_correction,
         repose_assessment=repose_assessment,
         cartesian_planner_mode=cartesian_mode_from_planner(planner),
+        nominal_insertion_T_key_hand=selected_nominal_insertion_relation,
+        selected_insertion_T_key_hand=selected_insertion_relation,
+        cylinder_yaw_gauge_socket_rad=selected_yaw_gauge,
     )
 
 

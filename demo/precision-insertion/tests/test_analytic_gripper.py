@@ -12,6 +12,8 @@ if str(DEMO) not in sys.path:
     sys.path.insert(0, str(DEMO))
 
 from precision_insertion.analytic_gripper import (  # noqa: E402
+    ROBOTIQ_SIDE_DOWN_GRASP_ABOVE_CENTER_M,
+    ROBOTIQ_SIDE_DOWN_GRASP_REAR_OFFSET_M,
     analytic_franka_gripper_grasp,
     analytic_franka_gripper_grasp_for_candidate,
     classify_cylinder_tabletop,
@@ -69,6 +71,8 @@ def test_end_exchange_does_not_change_tabletop_class_or_physical_grasp():
     # The D-infinity center and selected hand frame are identical even though
     # the local object origin/end label changed.
     assert np.allclose(a.T_robot_hand, b.T_robot_hand)
+    assert np.allclose(
+        a.T_key_hand_insertion_gauge, b.T_key_hand_insertion_gauge)
 
 
 def test_nearest_class_assignment_has_no_unobservable_rejection_band():
@@ -130,3 +134,7 @@ def test_robotiq_grasp_uses_physical_closing_axis_and_one_joint():
         np.abs(result.T_robot_hand[:3, 1]), [1.0, 0.0, 0.0], atol=1e-9)
     np.testing.assert_allclose(result.pregrasp_q, [0.0])
     np.testing.assert_allclose(result.grasp_q, [0.53])
+    assert result.T_robot_hand[2, 3] == pytest.approx(
+        0.125 + ROBOTIQ_SIDE_DOWN_GRASP_ABOVE_CENTER_M)
+    assert result.T_key_hand_insertion_gauge[2, 3] == pytest.approx(
+        0.040 - ROBOTIQ_SIDE_DOWN_GRASP_REAR_OFFSET_M)

@@ -17,8 +17,6 @@ from pathlib import Path
 
 import numpy as np
 
-from autodex.utils.conversion import cart2se3
-
 from .candidates import select_pose_candidates
 from .curobo_compat import install_curobo_planner_compat
 from .geometry import validate_se3
@@ -48,6 +46,7 @@ _NOMINAL_UNASSESSED_MARGIN = {
 _NOMINAL_UNBOUNDED_RELATION_SOURCES = {
     "nominal_BODex_relation_without_future_surface_bound",
     "initial_analytic_gripper_relation_without_future_surface_bound",
+    "selected_analytic_insertion_relation_without_future_surface_bound",
 }
 
 
@@ -206,18 +205,17 @@ def plan_measured_lift_chain(
     if selection["status"] != "candidates_available" or len(matches) != 1:
         raise ValueError("selected v8 candidate is stale or no longer eligible")
     candidate_dir = Path(matches[0]["candidate_dir"]).expanduser().resolve()
+    yaw_gauge = float(getattr(
+        trial, "cylinder_yaw_gauge_socket_rad", 0.0))
     if spec.is_parallel_gripper:
-        pickup_key = validate_se3(cart2se3(np.asarray(
-            trial.trial_scene["mesh"]["target"]["pose"], dtype=np.float64)),
-            name="initial analytic pickup T_robot_key")
-        pickup_hand = validate_se3(
-            trial.pickup_plan.wrist_se3,
-            name="initial analytic pickup T_robot_hand")
+        if trial.selected_insertion_T_key_hand is None:
+            raise ValueError(
+                "parallel-gripper trial lacks its selected insertion relation")
         relation = validate_se3(
-            np.linalg.inv(pickup_key) @ pickup_hand,
-            name="initial analytic T_key_hand")
+            trial.selected_insertion_T_key_hand,
+            name="selected analytic insertion T_key_hand")
         relation_source = (
-            "initial_analytic_gripper_relation_without_future_surface_bound")
+            "selected_analytic_insertion_relation_without_future_surface_bound")
         endpoint = screen_grasp_endpoint(
             shared_root=runner.shared_root, mode=runner.mode,
             candidate_dir=candidate_dir,
@@ -226,6 +224,8 @@ def plan_measured_lift_chain(
             T_key_hand_override=relation,
             hand_poses_override={"measured_post_squeeze":
                                  joint_sample.full_q[7:]},
+            cylinder_yaw_gauge_socket_rad=(
+                yaw_gauge),
             override_source="initial_analytic_gripper_plus_measured_jaws")
     else:
         relation = validate_se3(np.load(
@@ -293,7 +293,8 @@ def plan_measured_lift_chain(
                       margin=dict(_NOMINAL_UNASSESSED_MARGIN))
     targets = build_rigid_insertion_targets(
         mode=runner.mode, shared_root=runner.shared_root,
-        calibration=runner.calibration, T_key_hand=relation)
+        calibration=runner.calibration, T_key_hand=relation,
+        cylinder_yaw_gauge_socket_rad=yaw_gauge)
     planning = plan_held_transfer_and_axial(
         planner=planner, trial_scene=trial.trial_scene,
         shared_root=runner.shared_root, calibration=runner.calibration,

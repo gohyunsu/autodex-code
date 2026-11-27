@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import sys
 import time
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -19,6 +20,7 @@ from precision_insertion import nominal_postlift as nominal_module  # noqa: E402
 from precision_insertion import preinsert_checkpoint as arrival_module  # noqa: E402
 from precision_insertion import retry_session as retry_module  # noqa: E402
 from precision_insertion import session_runner as runner_module  # noqa: E402
+from precision_insertion.analytic_gripper import KEY_END_EXCHANGE  # noqa: E402
 from precision_insertion.assets import AssetPaths  # noqa: E402
 from precision_insertion.calibration import SessionCalibration  # noqa: E402
 from precision_insertion.config import select_mode  # noqa: E402
@@ -29,7 +31,12 @@ from precision_insertion.nominal_postlift import (  # noqa: E402
     plan_nominal_postlift_transfer, verify_nominal_postlift_preflight,
     write_nominal_postlift_preflight,
 )
+from precision_insertion.end_effector import end_effector_spec  # noqa: E402
+from precision_insertion.next_trial_xy import (  # noqa: E402
+    compensated_key_hand_relation,
+)
 from precision_insertion.observer import VLMObservation  # noqa: E402
+from precision_insertion.preflight import InsertionPreflight  # noqa: E402
 from precision_insertion.retry_session import assess_grounded_xy_diagnostic  # noqa: E402
 from precision_insertion import postlift_preflight as observed_module  # noqa: E402
 import test_postlift_preflight as observed_fixture  # noqa: E402
@@ -167,6 +174,81 @@ def test_nominal_route_rejects_incompatible_tabletop_grasp(tmp_path, monkeypatch
     with pytest.raises(ValueError, match="positive raw lift"):
         plan_nominal_postlift_transfer(**args)
     assert calls == []
+
+
+def test_parallel_nominal_route_preserves_selected_insertion_yaw(
+        tmp_path, monkeypatch):
+    args, candidate_dir, calls = _case(tmp_path, monkeypatch)
+    correction = (.0006, -.0008)
+    yaw = np.pi / 4
+    pickup_key = np.eye(4)
+    pose = np.asarray(
+        args["trial"].trial_scene["mesh"]["target"]["pose"], dtype=float)
+    # The test fixture stores identity key pose in cartesian convention.
+    pickup_key[:3, 3] = pose[:3]
+    pickup_hand = np.eye(4)
+    pickup_hand[2, 3] = .10
+    physical = np.linalg.inv(pickup_key) @ pickup_hand
+    insertion_gauge = KEY_END_EXCHANGE @ physical
+    command = compensated_key_hand_relation(
+        mode=args["mode"], shared_root=tmp_path,
+        T_key_hand=insertion_gauge,
+        wrist_correction_socket_m=correction,
+        cylinder_yaw_gauge_socket_rad=yaw)
+    args["trial"] = replace(
+        args["trial"], nominal_insertion_T_key_hand=insertion_gauge,
+        selected_insertion_T_key_hand=command,
+        cylinder_yaw_gauge_socket_rad=yaw,
+        wrist_correction_socket_m=correction,
+        pickup_plan=SimpleNamespace(wrist_se3=pickup_hand))
+    args["attempt"].wrist_correction_socket_m = correction
+    monkeypatch.setattr(
+        nominal_module, "end_effector_spec",
+        lambda _name=None: end_effector_spec("robotiq_2f85"))
+    args["screen"] = lambda **kwargs: {
+        **_nominal_screen(calls, **kwargs),
+        "cylinder_yaw_gauge_socket_rad": kwargs[
+            "cylinder_yaw_gauge_socket_rad"],
+    }
+    original_targets = nominal_module.build_rigid_insertion_targets
+    target_calls = []
+
+    def targets(**kwargs):
+        target_calls.append(kwargs)
+        return replace(
+            original_targets(**kwargs),
+            cylinder_yaw_gauge_socket_rad=kwargs[
+                "cylinder_yaw_gauge_socket_rad"])
+
+    monkeypatch.setattr(nominal_module, "build_rigid_insertion_targets", targets)
+    path = np.stack([args["joint_sample"].full_q] * 2)
+    monkeypatch.setattr(
+        nominal_module, "plan_held_transfer_and_axial",
+        lambda **kwargs: InsertionPreflight(
+            "sampled_planning_pass", None, path, path,
+            {"sampled_clear": True}, 1, kwargs["held_hand_q"],
+            "measured", ()))
+    result = plan_nominal_postlift_transfer(**args)
+    assert result.status == "sampled_postlift_preflight_pass"
+    np.testing.assert_allclose(result.relation.T_key_hand, physical)
+    np.testing.assert_allclose(
+        result.relation.insertion_gauge_T_key_hand, insertion_gauge)
+    np.testing.assert_allclose(result.relation.T_key_hand_command, command)
+    assert result.relation.cylinder_yaw_gauge_socket_rad == pytest.approx(yaw)
+    assert calls[0]["cylinder_yaw_gauge_socket_rad"] == pytest.approx(yaw)
+    assert target_calls[0]["cylinder_yaw_gauge_socket_rad"] == pytest.approx(yaw)
+    assert result.targets.cylinder_yaw_gauge_socket_rad == pytest.approx(yaw)
+
+    output = write_nominal_postlift_preflight(
+        result, tmp_path / "parallel_nominal")
+    monkeypatch.setattr(
+        nominal_module, "verify_lift_checkpoint",
+        lambda path: json.loads(Path(path).read_text(encoding="utf-8")))
+    verified = verify_nominal_postlift_preflight(
+        output / "report.json", mode=args["mode"], shared_root=tmp_path,
+        candidate_dir=candidate_dir)
+    assert verified["targets"]["cylinder_yaw_gauge_socket_rad"] == pytest.approx(
+        yaw)
 
 
 def test_session_runner_dispatches_nominal_plan_without_physical_file(

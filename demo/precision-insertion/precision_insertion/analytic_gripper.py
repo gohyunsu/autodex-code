@@ -23,9 +23,27 @@ from .geometry import validate_se3
 
 KEY_AXIS_LOCAL = np.asarray([0.0, 0.0, 1.0], dtype=np.float64)
 KEY_CENTER_LOCAL_M = np.asarray([0.0, 0.0, 0.040], dtype=np.float64)
+# Exact D-infinity end exchange about the 80 mm cylinder centre.  ``K @ S``
+# is the same physical cylinder with the opposite end chosen as local z=0.
+KEY_END_EXCHANGE = np.asarray([
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, -1.0, 0.0, 0.0],
+    [0.0, 0.0, -1.0, 0.080],
+    [0.0, 0.0, 0.0, 1.0],
+], dtype=np.float64)
 KEY_DIAMETER_M = 0.030
 ROBOTIQ_PALM_TO_KEY_CENTER_M = 0.125
 ROBOTIQ_KEY_GRASP_Q_RAD = 0.53
+# A lying 30 mm cylinder cannot be pinched through its geometric centre by
+# the long Robotiq fingertips without placing the fingertip collision bodies
+# below the support plane.  The upper-side pinch keeps the same top-down
+# approach and jaw direction, but moves the pad centre to the upper arc.  The
+# value is part of the deterministic Robotiq geometry (not a perception or
+# confidence threshold): at 40 mm above the cylinder centre both the open and
+# q=0.53 closed hand are clear of the measured table while the fingertips
+# still contact the key.
+ROBOTIQ_SIDE_DOWN_GRASP_ABOVE_CENTER_M = 0.040
+ROBOTIQ_SIDE_DOWN_GRASP_REAR_OFFSET_M = 0.025
 UPRIGHT_GRASP_ABOVE_CENTER_M = 0.015
 UPRIGHT_APPROACH_VARIANTS = 8
 SIDE_DOWN_WRIST_VARIANTS = 2
@@ -60,6 +78,7 @@ class AnalyticGripperGrasp:
     T_robot_hand: np.ndarray
     T_robot_pregrasp: np.ndarray
     T_key_hand: np.ndarray
+    T_key_hand_insertion_gauge: np.ndarray
     key_axis_robot: np.ndarray
     table_normal_robot: np.ndarray
     pregrasp_q: np.ndarray
@@ -190,13 +209,18 @@ def analytic_franka_gripper_grasp(
         axis = observed_axis - normal * float(np.dot(observed_axis, normal))
         axis = _canonical_sign(_unit(axis, name="table-parallel key axis"),
                                normal)
+        canonical_key_axis = axis.copy()
         hand_x = float(axis_sign) * axis
         hand_z = -normal
         grasp_center = key_center
+        if end_effector == "robotiq_2f85":
+            grasp_center = (
+                grasp_center - axis * ROBOTIQ_SIDE_DOWN_GRASP_REAR_OFFSET_M)
     else:
         hand_x = (observed_axis if float(np.dot(observed_axis, normal)) >= 0.0
                   else -observed_axis)
         hand_x = _unit(hand_x, name="upright key axis")
+        canonical_key_axis = hand_x.copy()
         radial = key_center - base
         radial = radial - normal * float(np.dot(radial, normal))
         if np.linalg.norm(radial) <= 1e-8:
@@ -222,7 +246,7 @@ def analytic_franka_gripper_grasp(
     hand_y = _unit(np.cross(hand_z, hand_x), name="jaw-closing axis")
     # Re-orthogonalize after using the measured upright axis.
     hand_x = _unit(np.cross(hand_y, hand_z), name="gripper longitudinal axis")
-    key_axis = hand_x.copy()
+    key_axis = canonical_key_axis
     # Stock Franka Hand closes along local y. Robotiq 2F-85 closes along
     # local x, with its straight tool extension along local z. Reorder the
     # exact same physical key/jaw/approach frame instead of reusing the wrong
@@ -235,16 +259,30 @@ def analytic_franka_gripper_grasp(
 
     hand = np.eye(4, dtype=np.float64)
     hand[:3, :3] = rotation
-    hand[:3, 3] = grasp_center - hand_z * float(palm_to_key_center_m)
+    palm_reach = float(palm_to_key_center_m)
+    if tabletop_class == "side_down" and end_effector == "robotiq_2f85":
+        palm_reach += ROBOTIQ_SIDE_DOWN_GRASP_ABOVE_CENTER_M
+    hand[:3, 3] = grasp_center - hand_z * palm_reach
     pregrasp = hand.copy()
     pregrasp[:3, 3] -= hand_z * float(pregrasp_clearance_m)
     key_hand = np.linalg.inv(key) @ hand
+    # The cylindrical ends are identical.  Use the representative whose +z
+    # points along the selected canonical physical axis so the grasped end is
+    # always the rear (local z≈15 mm) and the opposite end is always inserted.
+    # The pickup relation stays in the measured FoundPose frame; only the
+    # insertion target uses this symmetry-equivalent object gauge.
+    canonical_key = (key if float(np.dot(observed_axis, key_axis)) >= 0.0
+                     else key @ KEY_END_EXCHANGE)
+    insertion_key_hand = np.linalg.inv(canonical_key) @ hand
     validate_se3(key_hand, name="analytic T_key_hand")
+    validate_se3(insertion_key_hand,
+                  name="analytic insertion-gauge T_key_hand")
     return AnalyticGripperGrasp(
         tabletop_class=tabletop_class,
         T_robot_hand=hand,
         T_robot_pregrasp=pregrasp,
         T_key_hand=key_hand,
+        T_key_hand_insertion_gauge=insertion_key_hand,
         key_axis_robot=key_axis,
         table_normal_robot=normal,
         pregrasp_q=(np.asarray([0.0], dtype=np.float64)
