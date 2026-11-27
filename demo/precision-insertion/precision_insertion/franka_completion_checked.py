@@ -154,7 +154,12 @@ class CompletionCheckedFrankaMixin:
                 f"max_joint_velocity_rad_s={max_velocity:.6f}, "
                 f"velocity_limit_rad_s={self.stop_max_joint_velocity_rad_s:.6f}, "
                 f"arm_error={arm_error})")
-        if hand_traj is not None:
+        # The stock executor deliberately does not servo a parallel gripper
+        # along the arm trajectory.  It keeps the jaws open during approach
+        # and closes them in the following grasp stage, so no deferred ramp is
+        # expected here.  Inspire still requires exactly one terminal ramp.
+        if hand_traj is not None and not bool(getattr(
+                self, "_is_parallel_gripper", False)):
             if len(deferred) != 1:
                 raise RuntimeError("stock follower did not defer one final hand ramp")
             original_ramp(deferred[0])

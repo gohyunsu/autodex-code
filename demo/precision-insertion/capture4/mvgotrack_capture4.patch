@@ -1,7 +1,24 @@
 --- a/deploy/live_tracker.py
 +++ b/deploy/live_tracker.py
-@@ -1814,2 +1814,3 @@
--        if torch.cuda.get_device_name(0) != "NVIDIA GeForce RTX 3090":
-+        if (torch.cuda.get_device_name(0) != "NVIDIA GeForce RTX 3090" and
+@@ -1718,7 +1718,8 @@
+ 
+ 
+ def run(args) -> int:
+-    if os.environ.get("CUDA_VISIBLE_DEVICES") != "1":
++    if (os.environ.get("CUDA_VISIBLE_DEVICES") != "1" and
++            not os.environ.get("MVGOTRACK_ANY_GPU")):
+         raise RuntimeError("This tracker is assigned physical GPU 1; use deploy/live_tracker.sh")
+     stop = threading.Event()
+ 
+--- a/deploy/tracker_engine.py
++++ b/deploy/tracker_engine.py
+@@ -517,7 +517,8 @@
+             self.write_status()
+ 
+     def serve(self) -> int:
+-        if os.environ.get("CUDA_VISIBLE_DEVICES") != "1":
++        if (os.environ.get("CUDA_VISIBLE_DEVICES") != "1" and
 +                not os.environ.get("MVGOTRACK_ANY_GPU")):
-             raise RuntimeError("Physical GPU mapping differs; expected RTX 3090")
+             raise SystemExit("physical GPU 1 only: start through live_tracker.sh / init_foundpose.sh")
+         sys.path.insert(0, str(HERE))
+         CACHE.mkdir(parents=True, exist_ok=True)

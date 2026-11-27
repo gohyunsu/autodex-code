@@ -64,6 +64,12 @@ def _spawn(name: str, command: list[str]) -> int:
     log = (STATE / f"{name}.log").open("ab", buffering=0)
     environment = dict(os.environ)
     environment["MVGOTRACK_ANY_GPU"] = "1"
+    # The isolated capture4 deployment owns its only physical CUDA device.
+    # Expose that GPU as logical cuda:0 instead of inheriting MV-GoTrack's
+    # original two-GPU workstation assignment (physical GPU 1).
+    environment["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    environment["CUDA_VISIBLE_DEVICES"] = "0"
+    environment["EGL_DEVICE_ID"] = "0"
     process = subprocess.Popen(
         command, stdin=subprocess.DEVNULL, stdout=log,
         stderr=subprocess.STDOUT, start_new_session=True, env=environment)

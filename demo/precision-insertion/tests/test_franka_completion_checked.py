@@ -104,6 +104,25 @@ def test_completed_stream_permits_deferred_hand_ramp_without_blocking_land(
     assert arm.reads == 1
 
 
+def test_parallel_gripper_approach_expects_no_deferred_hand_ramp(monkeypatch):
+    def stock_parallel_follow(self, path, hand_traj, **kwargs):
+        response = self.arm.stop_streaming()
+        assert response.get("type") == "success"
+        # Franka/Robotiq jaws stay open throughout the arm approach.  The
+        # stock executor closes them only in its subsequent grasp stage.
+        assert hand_traj is not None
+
+    monkeypatch.setattr(_Stock, "_follow", stock_parallel_follow)
+    goal = np.full(7, .2)
+    arm = _Arm(goal)
+    executor = _wrapper(arm)
+    executor._is_parallel_gripper = True
+    hand = np.array([[0.08], [0.03]])
+    executor._follow(np.vstack([np.zeros(7), goal]), hand)
+    assert executor.ramps == []
+    assert arm.moves == []
+
+
 def test_stock_sized_stationary_residual_completes_without_landing(monkeypatch):
     monkeypatch.setattr(_Stock, "_follow", _stock_follow_stub)
     goal = np.zeros(7)
