@@ -338,3 +338,26 @@ def test_zerodex_run_selects_its_own_robot_factory(tmp_path):
     assert "FACTORY=precision_insertion.zerodex_franka_integration:factory" in lines
     assert str(demo / "run_zerodex_recorded.py") in lines
     assert "--plan-only" in lines
+
+
+def test_mvgotrack_profile_keeps_robotiq_candidate_selection_pose_aware():
+    demo = Path(__file__).resolve().parents[1]
+    profile = (demo / "config/experiments" /
+               "mvgotrack_axis_alignment_capture4.env.sh")
+    command = (
+        "unset PRECISION_INITIAL_CANDIDATE PRECISION_FIXED_CANDIDATE; "
+        "export PRECISION_END_EFFECTOR=robotiq_2f85; "
+        "export PRECISION_STAGE_ROOT=/test/stage; "
+        f"source {profile}; "
+        "printf 'initial=%s\\nfixed=%s\\ncatalog=%s\\n' "
+        "\"${PRECISION_INITIAL_CANDIDATE-}\" "
+        "\"${PRECISION_FIXED_CANDIDATE-}\" "
+        "\"$PRECISION_ENDPOINT_CATALOG\"")
+    completed = subprocess.run(
+        ["bash", "-c", command], capture_output=True, text=True, check=True)
+
+    assert "initial=\n" in completed.stdout
+    assert "fixed=\n" in completed.stdout
+    assert ("catalog=/test/stage/"
+            "recipient_gap5_endpoint_catalog_robotiq_2f85.json\n"
+            in completed.stdout)

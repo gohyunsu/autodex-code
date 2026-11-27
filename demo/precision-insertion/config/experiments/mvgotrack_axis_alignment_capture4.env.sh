@@ -1,9 +1,10 @@
 # Continuous 6D key tracking on capture4.  This profile changes only the
 # estimator and same-trial correction controls; task success remains the
-# existing release/clear-view VLM label.
-precision_experiment_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-source "$precision_experiment_dir/fixed_grasp_repeatability_5mm.env.sh"
-unset precision_experiment_dir
+# existing release/clear-view VLM label.  Candidate selection stays pose-aware:
+# the Robotiq catalog has distinct deterministic end-down and side-down grasps,
+# so this general tracking mode must not inherit the old Inspire-only fixed
+# candidate from the repeatability experiment.
+export PRECISION_GAP_MM=${PRECISION_GAP_MM:-5}
 
 export PRECISION_CAPTURE4_CAMERA_IDS=26053248,25322639,25305462,25322642
 export PRECISION_BOARD_FIT_CAMERA_IDS=26053248,25322639,25322642
