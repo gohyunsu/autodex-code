@@ -82,3 +82,33 @@ def test_feedback_and_motion_requests_share_one_req_socket_serially():
 
     assert answers == [{"ok": True}, {"ok": True}]
     assert sorted(client._command.types) == ["ping", "read_state"]
+
+
+def test_feedback_reads_capture4_published_state_not_command_port():
+    class PublishedState:
+        def recv(self):
+            return msgpack.packb({
+                "type": "gripper_state", "time_ns": 123_000_000_000,
+                "state": {
+                    "activated": True, "go_to": False,
+                    "object_state": 3, "requested_position": 120,
+                    "position": 118,
+                },
+            }, use_bin_type=True)
+
+    class ForbiddenCommand:
+        def send(self, _packed):
+            raise AssertionError("feedback must not poll the command port")
+
+    client = object.__new__(RobotiqRemote)
+    client._state_lock = threading.Lock()
+    client._state = PublishedState()
+    client._command = ForbiddenCommand()
+    client._last_command_position = 0
+
+    state = client.get_data()
+
+    assert state["time_ns"] == 123_000_000_000
+    assert state["requested_position"] == 120
+    np.testing.assert_allclose(state["qpos"], robotiq_q_from_position(118))
+    np.testing.assert_allclose(state["action"], robotiq_q_from_position(120))

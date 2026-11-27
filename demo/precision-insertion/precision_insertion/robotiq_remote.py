@@ -42,9 +42,14 @@ class RobotiqRemote:
         # send/receive exchange at a time; serialize those exchanges instead
         # of allowing the two threads to put the socket into EFSM state.
         self._request_lock = threading.RLock()
+        self._state_lock = threading.Lock()
         self._command = self._new_command_socket()
         self._state = self._context.socket(zmq.SUB)
         self._state.setsockopt(zmq.SUBSCRIBE, b"")
+        # Only the newest 50 Hz status packet is useful to robot feedback and
+        # motion-completion checks.  Do not let an old queue build while
+        # cuRobo or a VLM occupies the main thread.
+        self._state.setsockopt(zmq.CONFLATE, 1)
         self._state.setsockopt(zmq.RCVTIMEO, self.timeout_ms)
         self._state.setsockopt(zmq.LINGER, 0)
         self._state.connect(f"tcp://{self.host}:{self.state_port}")
@@ -86,7 +91,23 @@ class RobotiqRemote:
         return self._request({"type": "ping"})
 
     def read_state(self) -> dict[str, Any]:
-        response = self._request({"type": "read_state"})
+        # Capture4 already polls the serial device and publishes status at
+        # 50 Hz.  Reading that stream avoids issuing a second Modbus
+        # transaction for every feedback-sampler tick.  The lock is required
+        # because the sampler and the motion-completion loop share this SUB
+        # socket, just as they share the command socket above.
+        try:
+            with self._state_lock:
+                packed = self._state.recv()
+        except zmq.Again as exc:
+            raise TimeoutError(
+                "Capture4 Robotiq state stream timed out") from exc
+        response = msgpack.unpackb(packed, raw=False)
+        if response.get("type") == "gripper_error":
+            raise RuntimeError(response.get(
+                "error", "Capture4 Robotiq state stream failed"))
+        if response.get("type") != "gripper_state":
+            raise RuntimeError("Capture4 Robotiq state stream is malformed")
         state = self._state_body(response)
         self._last_command_position = int(state.get(
             "requested_position", self._last_command_position))
@@ -120,7 +141,6 @@ class RobotiqRemote:
             return state
         deadline = time.monotonic() + float(timeout_s)
         while True:
-            state = self.read_state()
             # object_state 1/2 means contact while opening/closing; 3 means the
             # requested position was reached.  Either is a completed Robotiq
             # motion, whereas object_state 0 with go_to=true is still moving.
@@ -130,6 +150,7 @@ class RobotiqRemote:
             if time.monotonic() >= deadline:
                 raise TimeoutError("Robotiq motion did not finish within timeout")
             time.sleep(0.02)
+            state = self.read_state()
 
     def close_until_contact(self, *, speed: int | None = None,
                             force: int | None = None,
@@ -139,13 +160,13 @@ class RobotiqRemote:
             force=self.force if force is None else force)
         deadline = time.monotonic() + float(timeout_s)
         while True:
-            state = self.read_state()
             if int(state.get("object_state", 0)) in (1, 2, 3) or not bool(
                     state.get("go_to", False)):
                 return robotiq_q_from_position(state["position"])
             if time.monotonic() >= deadline:
                 raise TimeoutError("Robotiq close did not finish within timeout")
             time.sleep(0.02)
+            state = self.read_state()
 
     def start(self, save_path: str) -> None:
         Path(save_path).mkdir(parents=True, exist_ok=True)

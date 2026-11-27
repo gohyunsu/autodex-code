@@ -318,7 +318,15 @@ def _read_live_franka_robotiq_state_once(
     max_arm_velocity_rad_s: float,
 ) -> LiveRobotState:
     """Pair the FR3 daemon packet with Capture4 Robotiq feedback."""
-    hand_data = hand.get_data()
+    try:
+        hand_data = hand.get_data()
+    except TimeoutError as exc:
+        # A missing published packet is the same transient condition as an
+        # unavailable or unpaired hand sample.  Let the existing feedback
+        # sampler discard it and consume the next 50 Hz packet instead of
+        # permanently terminating the session-long sampler.
+        raise FeedbackTimeAlignmentUnavailable(
+            "Robotiq state stream is temporarily unavailable") from exc
     arm_data = arm.get_data()
     if not isinstance(arm_data, dict):
         raise FrankaStateUnavailable("FR3 state stream is unavailable")
