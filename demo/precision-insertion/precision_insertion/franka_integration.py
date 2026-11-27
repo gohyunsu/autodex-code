@@ -40,7 +40,7 @@ from .corrected_hold_recovery import StockCorrectedHoldRecovery
 from .live_runtime import LiveRuntimeIntegration, RunLiveOptions
 from .labeling import terminal_label_provider
 from .distributed_qwen import DistributedQwenBackend
-from .observer import load_vlm_backend
+from .observer import MotionOnlyNoLabelBackend, load_vlm_backend
 from .project_layout import local_project_root, nas_project_root
 from .runtime_assembly import assemble_live_components
 from .timing_profile import timed
@@ -351,6 +351,8 @@ def factory(options: RunLiveOptions) -> LiveRuntimeIntegration:
         raise
 
     def configured_backend(launch):
+        if os.environ.get("PRECISION_SKIP_LABELING") == "1":
+            return MotionOnlyNoLabelBackend()
         height, width = launch.image_hw
         native_ceiling = (
             ((width + 31) // 32) * 32,

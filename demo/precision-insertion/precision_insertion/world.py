@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
@@ -138,6 +139,20 @@ def build_trial_scene_from_session(
     if mode.family == "cylinder":
         robot_pose = validate_se3(np.linalg.inv(c2r) @ pose_world,
                                   name="key pose_robot")
+        override = os.environ.get("PRECISION_KEY_TABLETOP_OVERRIDE")
+        if override is not None:
+            stems = {"end_down": "000", "side_down": "001"}
+            if override not in stems:
+                raise ValueError(
+                    "PRECISION_KEY_TABLETOP_OVERRIDE must be end_down or side_down")
+            template = validate_se3(np.load(
+                paths.key_tabletop_dir / f"{stems[override]}.npy",
+                allow_pickle=False), name=f"forced tabletop {override}")
+            # Keep the fresh FoundPose origin/XY and replace only the axial
+            # class. The stock scene builder below performs the usual table
+            # snap, so this is a test-time class correction rather than a
+            # fabricated object position.
+            robot_pose[:3, :3] = template[:3, :3]
         robot_pose = snap_axisymmetric_tabletop_pose(
             robot_pose, object_root=paths.object_root,
             object_name=mode.key_object,

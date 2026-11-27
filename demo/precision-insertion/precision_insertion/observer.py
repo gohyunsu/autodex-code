@@ -29,6 +29,48 @@ class ImageVLM(Protocol):
     def infer(self, images: list[Image.Image], prompt: str) -> str: ...
 
 
+class MotionOnlyNoLabelBackend:
+    """Zero-latency continuation backend for supervised motion dry-runs.
+
+    This backend is selected only by the explicit ``PRECISION_SKIP_LABELING``
+    development switch.  It performs no image inference.  The existing
+    checkpoint schemas still receive deterministic continuation tokens so the
+    action loop can exercise pickup through release without waiting for a VLM;
+    the model name makes clear that these are not outcome labels.
+    """
+
+    model = "motion_only_no_label"
+    preferred_image_batch_size = 2
+
+    @staticmethod
+    def _camera(prompt: str) -> str:
+        marker = "Valid camera IDs: "
+        if marker in prompt:
+            return prompt.split(marker, 1)[1].split(".", 1)[0].split(",", 1)[0].strip()
+        return "multiple"
+
+    def infer(self, _images: list[Image.Image], prompt: str) -> str:
+        camera = self._camera(prompt)
+        if "\"held\"" in prompt and "\"miss\"" in prompt:
+            field, value = "class", "held"
+        elif "\"coarse_match\"" in prompt:
+            field, value = "class", "coarse_match"
+        elif "\"normal_appearance\"" in prompt:
+            field, value = "visual_class", "normal_appearance"
+        elif "answer INSIDE" in prompt or "Reply A or B" in prompt:
+            return "INSIDE" if "answer INSIDE" in prompt else "B"
+        else:
+            raise ValueError("motion-only backend received an unknown checkpoint")
+        return json.dumps({
+            field: value,
+            "evidence_views": [camera],
+            "evidence": "motion-only continuation; image inference skipped",
+        })
+
+    def infer_many(self, payloads) -> list[str]:
+        return [self.infer(images, prompt) for images, prompt in payloads]
+
+
 DEFAULT_LOCAL_VLM_MODEL_ID = "Qwen/Qwen3-VL-2B-Instruct"
 LOCAL_QWEN_CACHE_NAME = "Qwen3-VL-2B-Instruct"
 RELEASED_SOCKET_IMAGE_SIZE = (768, 576)
